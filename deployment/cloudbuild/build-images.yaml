@@ -1,0 +1,102 @@
+steps:
+  - id: build-orchestrator
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/orchestrator:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/orchestrator:latest
+      - -f
+      - orchestrator/Dockerfile
+      - orchestrator/
+
+  - id: build-mcp-quickbooks
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-quickbooks:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-quickbooks:latest
+      - -f
+      - mcp-servers/quickbooks/Dockerfile
+      - mcp-servers/quickbooks/
+
+  - id: build-mcp-linkedin
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-linkedin:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-linkedin:latest
+      - -f
+      - mcp-servers/linkedin/Dockerfile
+      - mcp-servers/linkedin/
+
+  - id: push-orchestrator
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/orchestrator"]
+    waitFor: [build-orchestrator]
+
+  - id: push-mcp-quickbooks
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-quickbooks"]
+    waitFor: [build-mcp-quickbooks]
+
+  - id: push-mcp-linkedin
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-linkedin"]
+    waitFor: [build-mcp-linkedin]
+
+  - id: deploy-orchestrator
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - inner-loop-orchestrator
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/orchestrator:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --quiet
+    waitFor: [push-orchestrator]
+
+  - id: deploy-mcp-quickbooks
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - inner-loop-mcp-qbo
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-quickbooks:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --quiet
+    waitFor: [push-mcp-quickbooks]
+
+  - id: deploy-mcp-linkedin
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - inner-loop-mcp-linkedin
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-linkedin:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --quiet
+    waitFor: [push-mcp-linkedin]
+
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: inner-loop-images
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/orchestrator:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-quickbooks:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-linkedin:${SHORT_SHA}

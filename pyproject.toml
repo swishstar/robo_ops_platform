@@ -1,0 +1,10 @@
+[project]
+name = "robo-inner-loop"
+version = "1.0.0"
+description = "Robo Reliance Field Operations Inner Loop Platform (ADK)"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.agents-cli]
+deployment_target = "cloud_run"
+agent_directory = "orchestrator"

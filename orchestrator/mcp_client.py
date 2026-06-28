@@ -19,6 +19,20 @@ logger = logging.getLogger(__name__)
 MCP_QUICKBOOKS_ENDPOINT = os.getenv("MCP_QUICKBOOKS_ENDPOINT", "http://localhost:9001")
 MCP_LINKEDIN_ENDPOINT = os.getenv("MCP_LINKEDIN_ENDPOINT", "http://localhost:9002")
 DEFAULT_TIMEOUT_SECONDS = float(os.getenv("MCP_HTTP_TIMEOUT_SECONDS", "30"))
+MCP_USE_IDENTITY_TOKEN = os.getenv("MCP_USE_IDENTITY_TOKEN", "false").lower() == "true"
+
+
+def _identity_token(audience: str) -> str | None:
+    """Fetch a Google ID token for Cloud Run service-to-service calls."""
+    try:
+        import google.auth.transport.requests
+        import google.oauth2.id_token
+
+        request = google.auth.transport.requests.Request()
+        return google.oauth2.id_token.fetch_id_token(request, audience)
+    except Exception as exc:
+        logger.error("Failed to fetch identity token for audience %s: %s", audience, exc)
+        return None
 
 
 class MCPClientError(Exception):
@@ -49,8 +63,14 @@ class MCPJsonRpcClient:
         url = f"{self.base_url}/jsonrpc"
         logger.info("MCP outbound %s -> %s params=%s", self.service_name, method, params)
 
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if MCP_USE_IDENTITY_TOKEN:
+            token = _identity_token(self.base_url)
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(url, json=envelope)
+            response = await client.post(url, json=envelope, headers=headers)
             response.raise_for_status()
             payload = response.json()
 

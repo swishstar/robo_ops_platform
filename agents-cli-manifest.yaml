@@ -1,0 +1,6 @@
+name: robo-inner-loop
+agent_directory: orchestrator
+create_params:
+  deployment_target: cloud_run
+  session_type: cloud_sql
+  prototype: false

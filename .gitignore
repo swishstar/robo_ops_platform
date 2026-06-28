@@ -13,3 +13,13 @@ venv/
 
 # Docker
 postgres_data/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.tfvars
+!*.tfvars.example
+

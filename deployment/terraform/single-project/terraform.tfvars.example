@@ -1,0 +1,10 @@
+project_id = "YOUR_GCP_PROJECT_ID"
+region     = "us-central1"
+environment = "dev"
+
+# After building images (see terraform output image_build_commands):
+# orchestrator_image     = "us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/inner-loop-images/orchestrator:latest"
+# mcp_quickbooks_image   = "us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/inner-loop-images/mcp-quickbooks:latest"
+# mcp_linkedin_image     = "us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/inner-loop-images/mcp-linkedin:latest"
+
+allow_public_orchestrator = true
