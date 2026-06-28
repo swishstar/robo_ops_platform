@@ -116,6 +116,7 @@ def process_visit_signoff(
             "payout_cents": result.payout_cents,
             "ledger_id": result.ledger_id,
             "labor_log_id": result.labor_log_id,
+            "approval_token": result.approval_token,
             "next_step": result.next_step,
         }
     except ValueError as exc:
