@@ -1,0 +1,60 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: local_postgres_ledger
+    environment:
+      POSTGRES_DB: roboreliance_local
+      POSTGRES_USER: engine_admin
+      POSTGRES_PASSWORD: development_vault_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engine_admin -d roboreliance_local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  adk_orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile.dev
+    container_name: local_adk_runtime
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgresql://engine_admin:development_vault_password@postgres:5432/roboreliance_local
+      MCP_QUICKBOOKS_ENDPOINT: http://mcp_quickbooks:9001
+      MCP_LINKEDIN_ENDPOINT: http://mcp_linkedin:9002
+      ENVIRONMENT: development
+      GOOGLE_API_KEY: ${GOOGLE_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp_quickbooks:
+        condition: service_started
+      mcp_linkedin:
+        condition: service_started
+    volumes:
+      - ./orchestrator:/app
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--reload"]
+
+  mcp_quickbooks:
+    build: ./mcp-servers/quickbooks
+    container_name: local_mcp_qbo
+    ports:
+      - "9001:9001"
+
+  mcp_linkedin:
+    build: ./mcp-servers/linkedin
+    container_name: local_mcp_linkedin
+    ports:
+      - "9002:9002"
+
+volumes:
+  postgres_data:
