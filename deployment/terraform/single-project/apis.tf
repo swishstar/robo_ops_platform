@@ -9,6 +9,8 @@ resource "google_project_service" "required" {
     "artifactregistry.googleapis.com",
     "iam.googleapis.com",
     "cloudresourcemanager.googleapis.com",
+    "chat.googleapis.com",
+    "discoveryengine.googleapis.com",
   ])
 
   project            = var.project_id

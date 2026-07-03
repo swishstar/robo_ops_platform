@@ -35,6 +35,18 @@ steps:
       - mcp-servers/linkedin/Dockerfile
       - mcp-servers/linkedin/
 
+  - id: build-ops-web
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/ops-web:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/ops-web:latest
+      - -f
+      - web/Dockerfile
+      - web/
+
   - id: push-orchestrator
     name: gcr.io/cloud-builders/docker
     args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/orchestrator"]
@@ -49,6 +61,11 @@ steps:
     name: gcr.io/cloud-builders/docker
     args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-linkedin"]
     waitFor: [build-mcp-linkedin]
+
+  - id: push-ops-web
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/ops-web"]
+    waitFor: [build-ops-web]
 
   - id: deploy-orchestrator
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
@@ -89,6 +106,19 @@ steps:
       - --quiet
     waitFor: [push-mcp-linkedin]
 
+  - id: deploy-ops-web
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - inner-loop-ops-web
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/ops-web:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --quiet
+    waitFor: [push-ops-web]
+
 substitutions:
   _REGION: us-central1
   _REPOSITORY: inner-loop-images
@@ -100,3 +130,4 @@ images:
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/orchestrator:${SHORT_SHA}
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-quickbooks:${SHORT_SHA}
   - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/mcp-linkedin:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/ops-web:${SHORT_SHA}

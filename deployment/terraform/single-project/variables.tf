@@ -78,3 +78,15 @@ variable "orchestrator_max_instances" {
   type    = number
   default = 10
 }
+
+variable "web_app_image" {
+  description = "Container image URI for the Ops & Finance web app"
+  type        = string
+  default     = "us-docker.pkg.dev/cloudrun/container/hello"
+}
+
+variable "allow_public_web_app" {
+  description = "Allow unauthenticated ingress to ops web app (use IAP in production)"
+  type        = bool
+  default     = true
+}

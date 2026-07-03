@@ -166,7 +166,7 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
 
 - [ ] **E3. Finance approval (HITL)**
   ```bash
-  curl -s -X POST "$ORCH_URL/webhooks/finance-approve" \
+  curl -s -X POST "$ORCH_URL/webhooks/finance" \
     -H 'Content-Type: application/json' \
     -d '{
       "approval_token": "PASTE_TOKEN_HERE",
@@ -196,7 +196,8 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
 
 - [ ] **F2. Wire external webhooks**
   - Slack Events API → `https://<orchestrator-url>/webhooks/slack`
-  - Google Chat / Finance review cards → `https://<orchestrator-url>/webhooks/finance-approve`
+  - Google Chat → `https://<orchestrator-url>/webhooks/google-chat`
+  - Finance automation → `https://<orchestrator-url>/webhooks/finance`
 
 - [ ] **F3. CI/CD trigger**
   - Cloud Build trigger on push to `main` using `deployment/cloudbuild/build-images.yaml`
@@ -226,12 +227,16 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
 
 ## UI status
 
-There is **no custom operator UI** in this repository yet. Surfaces available today:
+See [docs/UI_STRATEGY.md](../docs/UI_STRATEGY.md) for the full three-surface model.
 
 | Surface | URL | Purpose |
 |---------|-----|---------|
-| **FastAPI Swagger** | `/docs` | Manual API testing (best “UI” today) |
-| **Google Chat Spaces** | (external, per spec) | Intended technician + finance review UX |
-| **ADK playground** | `agents-cli playground` / `adk web` | Local agent chat dev only |
+| **Ops Web App** | `http://localhost:5173` (dev) / `terraform output ops_web_url` | Service requests, timekeeping, finance table, embedded Web Chat |
+| **New Service Request** | `POST /api/v1/visits` | Primary intake — web form or Slack API call |
+| **Web Chat API** | `POST /api/v1/web-chat/message` | NL queries/commands in web app (not channel listening) |
+| **Google Chat agent** | `POST /webhooks/google-chat` | Internal visit spaces — RAG, ingest, NL timekeeping |
+| **Slack agent** | `POST /webhooks/slack` | Client/external channels — parallel to Google Chat |
+| **Finance webhook** | `POST /webhooks/finance` | Programmatic approve/reject gateway |
+| **FastAPI Swagger** | `/docs` | API testing |
 
-A dedicated ops dashboard (visits, sign-off, finance approve) is not built yet — say the word if you want that scaffolded next.
+Register Google Chat: [deployment/docs/GOOGLE_CHAT_SETUP.md](docs/GOOGLE_CHAT_SETUP.md)

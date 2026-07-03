@@ -14,6 +14,7 @@ from typing import Any
 from google_agents_cli_adk import Agent, Gemini, Tool
 
 from database import (
+    clock_in_transaction,
     get_visit_by_id,
     parse_iso8601,
     process_visit_signoff_transaction,
@@ -54,6 +55,80 @@ def lookup_technical_sop(query: str) -> str:
         f"- Query: {normalized_query}\n"
         f"- Index endpoint: {SOP_INDEX_ENDPOINT}\n"
         "- Action: Delegate vector retrieval to Platform Search Extension at runtime."
+    )
+
+
+FIELD_LEARNINGS_INDEX_ENDPOINT = os.getenv(
+    "FIELD_LEARNINGS_SEARCH_ENDPOINT",
+    "https://discoveryengine.googleapis.com/v1/projects/roboreliance/locations/global/"
+    "collections/default_collection/engines/field-learnings/servingConfigs/default_search",
+)
+
+
+@Tool
+def lookup_field_learnings(query: str) -> str:
+    """
+    Queries the auto-indexed field learnings corpus from Google Chat and Slack visit channels.
+    Lower trust tier than SOP — prefer lookup_technical_sop for authoritative procedures.
+    """
+    normalized_query = query.strip()
+    if not normalized_query:
+        return "Error: field learnings query must not be empty."
+
+    if os.getenv("ENVIRONMENT", "development") == "development":
+        from field_learnings_ingest import FIELD_LEARNINGS_STORE
+
+        snippets: list[str] = []
+        if FIELD_LEARNINGS_STORE.exists():
+            import json
+
+            for path in sorted(FIELD_LEARNINGS_STORE.glob("*.json"))[:5]:
+                try:
+                    doc = json.loads(path.read_text(encoding="utf-8"))
+                    if normalized_query.lower() in doc.get("text", "").lower():
+                        snippets.append(
+                            f"- {doc.get('text', '')[:200]} "
+                            f"(Citation: {doc.get('citation', path.stem)})"
+                        )
+                except (OSError, json.JSONDecodeError):
+                    continue
+        if snippets:
+            return "Field Learnings Context (local):\n" + "\n".join(snippets)
+        return (
+            "Field Learnings Context (local stub):\n"
+            f"- Query: {normalized_query}\n"
+            "- No matching field notes indexed yet for this environment."
+        )
+
+    return (
+        "Field Learnings Context (production index binding):\n"
+        f"- Query: {normalized_query}\n"
+        f"- Index endpoint: {FIELD_LEARNINGS_INDEX_ENDPOINT}\n"
+        "- Action: Delegate vector retrieval to field_learnings Discovery Engine at runtime."
+    )
+
+
+@Tool
+def get_visit_context(visit_id: str) -> dict[str, Any]:
+    """
+    Deterministic read of visit metadata and active labor state for agent grounding.
+    """
+    from database import get_visit_context_payload
+
+    return get_visit_context_payload(visit_id.strip())
+
+
+@Tool
+def clock_in_visit(
+    visit_id: str,
+    technician_identity: str = "field.tech@roboreliance.internal",
+) -> dict[str, Any]:
+    """
+    Clocks a technician in for a visit. Validates visit state deterministically.
+    """
+    return clock_in_transaction(
+        visit_id=visit_id.strip(),
+        technician_identity=technician_identity.strip(),
     )
 
 
@@ -134,15 +209,24 @@ tech_support_agent = Agent(
     model=Gemini(model="gemini-2.0-pro"),
     instruction="""
     You are the on-site operational intelligence agent for Robo Reliance.
-    Your mission is to support field engineers and extract visit parameters upon completion.
+    Your mission is to support field engineers across Web Chat, Google Chat (internal),
+    and Slack (client-facing) surfaces.
 
     Operations Guidelines:
-    1. Ground all engineering, error codes, and maintenance lookups using 'lookup_technical_sop'.
-       Do not hallucinate instructions or error definitions. Always reference matching sources.
-    2. When the technician signals work completion or requests to clock out, you must capture
-       the clock-in time, clock-out time, and technical findings. Once extracted, you MUST invoke
-       the 'process_visit_signoff' tool.
-    3. You cannot authorize payments or directly log success metrics yourself. You must delegate to your tools.
+    1. Ground engineering lookups with 'lookup_technical_sop' first (authoritative SOPs).
+       Use 'lookup_field_learnings' for on-site discoveries from past visit channels.
+       Always cite sources — Drive paths or field-learning citations.
+    2. Use 'get_visit_context' when a visit_id or bound channel is available.
+    3. For clock-in, invoke 'clock_in_visit'. For completion, capture clock-in, clock-out,
+       and findings then invoke 'process_visit_signoff'.
+    4. You cannot authorize payments or approve payouts. Never discuss approval tokens.
+       Finance approval happens only in the Ops web app.
     """,
-    tools=[lookup_technical_sop, process_visit_signoff],
+    tools=[
+        lookup_technical_sop,
+        lookup_field_learnings,
+        get_visit_context,
+        clock_in_visit,
+        process_visit_signoff,
+    ],
 )

@@ -174,6 +174,14 @@ resource "google_cloud_run_v2_service" "orchestrator" {
           }
         }
       }
+      env {
+        name  = "FIELD_LEARNINGS_SEARCH_ENDPOINT"
+        value = "https://discoveryengine.googleapis.com/v1/projects/${var.project_id}/locations/global/collections/default_collection/engines/field-learnings/servingConfigs/default_search"
+      }
+      env {
+        name  = "CORS_ORIGINS"
+        value = "*"
+      }
 
       startup_probe {
         http_get {
@@ -227,6 +235,62 @@ resource "google_cloud_run_v2_service_iam_member" "public_orchestrator" {
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.orchestrator.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+
+resource "google_cloud_run_v2_service" "ops_web" {
+  name     = local.web_app_name
+  location = var.region
+  labels   = local.labels
+  ingress  = "INGRESS_TRAFFIC_ALL"
+
+  template {
+    scaling {
+      min_instance_count = 0
+      max_instance_count = 5
+    }
+
+    containers {
+      image = var.web_app_image
+      ports {
+        container_port = 8080
+      }
+      env {
+        name  = "VITE_API_BASE"
+        value = google_cloud_run_v2_service.orchestrator.uri
+      }
+      resources {
+        limits = {
+          cpu    = "1"
+          memory = "512Mi"
+        }
+      }
+      startup_probe {
+        http_get {
+          path = "/health"
+          port = 8080
+        }
+        initial_delay_seconds = 5
+        period_seconds        = 10
+      }
+    }
+  }
+
+  depends_on = [google_project_service.required]
+
+  lifecycle {
+    ignore_changes = [
+      template[0].containers[0].image,
+    ]
+  }
+}
+
+resource "google_cloud_run_v2_service_iam_member" "public_ops_web" {
+  count    = var.allow_public_web_app ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.ops_web.name
   role     = "roles/run.invoker"
   member   = "allUsers"
 }

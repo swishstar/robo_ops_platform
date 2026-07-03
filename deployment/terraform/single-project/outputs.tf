@@ -14,6 +14,10 @@ output "orchestrator_url" {
   value = google_cloud_run_v2_service.orchestrator.uri
 }
 
+output "ops_web_url" {
+  value = google_cloud_run_v2_service.ops_web.uri
+}
+
 output "mcp_quickbooks_url" {
   value = google_cloud_run_v2_service.mcp_quickbooks.uri
 }
@@ -55,6 +59,9 @@ output "schema_bootstrap_command" {
     gcloud sql connect ${google_sql_database_instance.main.name} \
       --project=${var.project_id} --user=${var.db_user} --database=${var.db_name} \
       < init-scripts/02_platform_configs.sql
+    gcloud sql connect ${google_sql_database_instance.main.name} \
+      --project=${var.project_id} --user=${var.db_user} --database=${var.db_name} \
+      < init-scripts/03_chat_bindings.sql
   EOT
 }
 
@@ -65,8 +72,10 @@ output "image_build_commands" {
     docker build -t ${var.region}-docker.pkg.dev/${var.project_id}/${local.artifact_repo_id}/orchestrator:latest -f orchestrator/Dockerfile orchestrator/
     docker build -t ${var.region}-docker.pkg.dev/${var.project_id}/${local.artifact_repo_id}/mcp-quickbooks:latest -f mcp-servers/quickbooks/Dockerfile mcp-servers/quickbooks/
     docker build -t ${var.region}-docker.pkg.dev/${var.project_id}/${local.artifact_repo_id}/mcp-linkedin:latest -f mcp-servers/linkedin/Dockerfile mcp-servers/linkedin/
+    docker build -t ${var.region}-docker.pkg.dev/${var.project_id}/${local.artifact_repo_id}/ops-web:latest -f web/Dockerfile web/
     docker push ${var.region}-docker.pkg.dev/${var.project_id}/${local.artifact_repo_id}/orchestrator:latest
     docker push ${var.region}-docker.pkg.dev/${var.project_id}/${local.artifact_repo_id}/mcp-quickbooks:latest
     docker push ${var.region}-docker.pkg.dev/${var.project_id}/${local.artifact_repo_id}/mcp-linkedin:latest
+    docker push ${var.region}-docker.pkg.dev/${var.project_id}/${local.artifact_repo_id}/ops-web:latest
   EOT
 }

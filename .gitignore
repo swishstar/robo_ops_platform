@@ -6,6 +6,10 @@ __pycache__/
 venv/
 .env
 
+# Node / Web
+node_modules/
+dist/
+
 # IDE / OS
 .DS_Store
 .idea/

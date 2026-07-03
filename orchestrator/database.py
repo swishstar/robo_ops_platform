@@ -519,14 +519,15 @@ def commit_finance_rejection(
     )
 
 
-def create_visit_from_slack(
+def create_visit(
     *,
-    slack_channel_id: str,
     location_string: str,
     metadata_poc: dict[str, Any],
+    slack_channel_id: str | None = None,
     google_space_id: str | None = None,
+    source: str = "web_app",
 ) -> VisitRecord:
-    """Deterministic visit intake — invoked only from validated webhook handlers."""
+    """Deterministic visit creation — primary entry point for web app and Slack intake."""
     space_id = google_space_id or f"spaces/{uuid4()}"
     with sync_connection() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -549,11 +550,12 @@ def create_visit_from_slack(
             append_audit_trail(
                 conn,
                 visit_id=row["visit_id"],
-                execution_context="webhook_slack_intake",
+                execution_context=f"visit_create_{source}",
                 input_payload={
                     "slack_channel_id": slack_channel_id,
                     "location_string": location_string,
                     "metadata_poc": metadata_poc,
+                    "source": source,
                 },
                 output_receipt={"google_space_id": space_id, "current_state": "initiated"},
             )
@@ -564,6 +566,23 @@ def create_visit_from_slack(
         location_string=row["location_string"],
         metadata_poc=dict(row["metadata_poc"]),
         current_state=row["current_state"],
+    )
+
+
+def create_visit_from_slack(
+    *,
+    slack_channel_id: str,
+    location_string: str,
+    metadata_poc: dict[str, Any],
+    google_space_id: str | None = None,
+) -> VisitRecord:
+    """Legacy wrapper — delegates to create_visit."""
+    return create_visit(
+        location_string=location_string,
+        metadata_poc=metadata_poc,
+        slack_channel_id=slack_channel_id,
+        google_space_id=google_space_id,
+        source="slack_intake",
     )
 
 
@@ -743,3 +762,386 @@ def parse_iso8601(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def list_visits(
+    *,
+    state: str | None = None,
+    technician: str | None = None,
+    include_completed: bool = False,
+) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if state:
+        clauses.append("v.current_state::text = %s")
+        params.append(state)
+    elif not include_completed:
+        clauses.append("v.current_state::text NOT IN ('completed', 'failed')")
+
+    if technician:
+        clauses.append(
+            """
+            EXISTS (
+                SELECT 1 FROM labor_logs ll
+                WHERE ll.visit_id = v.visit_id
+                  AND ll.technician_identity = %s
+            )
+            """
+        )
+        params.append(technician)
+
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    query = f"""
+        SELECT v.visit_id, v.slack_channel_id, v.google_space_id, v.location_string,
+               v.metadata_poc, v.current_state::text AS current_state,
+               v.created_at, v.updated_at,
+               ll.technician_identity,
+               fl.approval_state AS pay_status,
+               fl.payout_cents
+        FROM visits v
+        LEFT JOIN LATERAL (
+            SELECT technician_identity FROM labor_logs
+            WHERE visit_id = v.visit_id ORDER BY created_at DESC LIMIT 1
+        ) ll ON TRUE
+        LEFT JOIN LATERAL (
+            SELECT approval_state, payout_cents FROM financial_ledgers
+            WHERE visit_id = v.visit_id ORDER BY created_at DESC LIMIT 1
+        ) fl ON TRUE
+        {where_sql}
+        ORDER BY v.created_at DESC
+        LIMIT 200
+    """
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, tuple(params))
+            return [dict(row) for row in cur.fetchall()]
+
+
+def get_visit_detail(visit_id: str) -> dict[str, Any] | None:
+    visit = get_visit_by_id(visit_id)
+    if not visit:
+        return None
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT log_id, technician_identity, clock_in, clock_out,
+                       extracted_findings, is_verified, created_at
+                FROM labor_logs
+                WHERE visit_id = %s
+                ORDER BY created_at DESC
+                """,
+                (visit_id,),
+            )
+            labor_logs = [dict(row) for row in cur.fetchall()]
+            cur.execute(
+                """
+                SELECT ledger_id, calculated_hours, invoice_cents, payout_cents,
+                       approval_state, qbo_invoice_reference, created_at, updated_at
+                FROM financial_ledgers
+                WHERE visit_id = %s
+                ORDER BY created_at DESC
+                """,
+                (visit_id,),
+            )
+            ledgers = [dict(row) for row in cur.fetchall()]
+    visit["labor_logs"] = labor_logs
+    visit["financial_ledgers"] = ledgers
+    return visit
+
+
+def clock_in_transaction(
+    *,
+    visit_id: str,
+    technician_identity: str,
+) -> dict[str, Any]:
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT visit_id, current_state::text AS current_state
+                FROM visits WHERE visit_id = %s FOR UPDATE
+                """,
+                (visit_id,),
+            )
+            visit = cur.fetchone()
+            if not visit:
+                return {"status": "error", "message": f"Unknown visit_id {visit_id}."}
+            if visit["current_state"] not in {"initiated", "active"}:
+                return {
+                    "status": "error",
+                    "message": f"Visit state '{visit['current_state']}' does not allow clock-in.",
+                }
+            cur.execute(
+                """
+                SELECT log_id FROM labor_logs
+                WHERE visit_id = %s AND clock_in IS NOT NULL AND clock_out IS NULL
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (visit_id,),
+            )
+            if cur.fetchone():
+                return {"status": "error", "message": "Technician already clocked in for this visit."}
+
+            now = datetime.now(timezone.utc)
+            cur.execute(
+                """
+                INSERT INTO labor_logs (visit_id, technician_identity, clock_in, is_verified)
+                VALUES (%s, %s, %s, FALSE)
+                RETURNING log_id
+                """,
+                (visit_id, technician_identity, now),
+            )
+            log_id = cur.fetchone()["log_id"]
+            cur.execute(
+                """
+                UPDATE visits SET current_state = 'active' WHERE visit_id = %s
+                """,
+                (visit_id,),
+            )
+            receipt = {
+                "status": "success",
+                "visit_id": visit_id,
+                "labor_log_id": str(log_id),
+                "clock_in": now.isoformat(),
+                "visit_state": "active",
+            }
+            append_audit_trail(
+                conn,
+                visit_id=visit_id,
+                execution_context="api_clock_in",
+                input_payload={
+                    "visit_id": visit_id,
+                    "technician_identity": technician_identity,
+                },
+                output_receipt=receipt,
+            )
+    return receipt
+
+
+def list_pending_finance() -> list[dict[str, Any]]:
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT fl.ledger_id, fl.visit_id, fl.calculated_hours,
+                       fl.invoice_cents, fl.payout_cents, fl.approval_state,
+                       fl.created_at, v.location_string, v.metadata_poc,
+                       ll.technician_identity, ll.extracted_findings
+                FROM financial_ledgers fl
+                JOIN visits v ON v.visit_id = fl.visit_id
+                LEFT JOIN LATERAL (
+                    SELECT technician_identity, extracted_findings
+                    FROM labor_logs
+                    WHERE visit_id = fl.visit_id
+                    ORDER BY created_at DESC LIMIT 1
+                ) ll ON TRUE
+                WHERE fl.approval_state = 'pending_review'
+                ORDER BY fl.created_at ASC
+                """
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+
+def get_finance_ledger_detail(ledger_id: str) -> dict[str, Any] | None:
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT fl.ledger_id, fl.visit_id, fl.calculated_hours,
+                       fl.invoice_cents, fl.payout_cents, fl.approval_state,
+                       fl.qbo_invoice_reference, fl.created_at, fl.updated_at,
+                       v.location_string, v.metadata_poc, v.current_state::text AS visit_state,
+                       v.slack_channel_id, v.google_space_id,
+                       ll.technician_identity, ll.clock_in, ll.clock_out,
+                       ll.extracted_findings
+                FROM financial_ledgers fl
+                JOIN visits v ON v.visit_id = fl.visit_id
+                LEFT JOIN LATERAL (
+                    SELECT technician_identity, clock_in, clock_out, extracted_findings
+                    FROM labor_logs WHERE visit_id = fl.visit_id
+                    ORDER BY created_at DESC LIMIT 1
+                ) ll ON TRUE
+                WHERE fl.ledger_id = %s
+                """,
+                (ledger_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            detail = dict(row)
+            cur.execute(
+                """
+                SELECT audit_id, execution_context, input_payload, output_receipt, timestamp
+                FROM immutable_audit_trail
+                WHERE visit_id = %s
+                ORDER BY timestamp DESC LIMIT 10
+                """,
+                (str(detail["visit_id"]),),
+            )
+            detail["audit_trail"] = [dict(r) for r in cur.fetchall()]
+            cur.execute(
+                """
+                SELECT approval_token, consumed, expires_at
+                FROM finance_approval_tokens
+                WHERE ledger_id = %s AND consumed = FALSE
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (ledger_id,),
+            )
+            token_row = cur.fetchone()
+            if token_row:
+                detail["approval_token"] = token_row["approval_token"]
+            return detail
+
+
+def list_finance_ledgers(
+    *,
+    approval_state: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if approval_state:
+        clauses.append("fl.approval_state = %s")
+        params.append(approval_state)
+
+    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
+
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                SELECT fl.ledger_id, fl.visit_id, fl.calculated_hours,
+                       fl.invoice_cents, fl.payout_cents, fl.approval_state,
+                       fl.qbo_invoice_reference, fl.created_at, fl.updated_at,
+                       v.location_string, v.metadata_poc,
+                       ll.technician_identity, ll.extracted_findings
+                FROM financial_ledgers fl
+                JOIN visits v ON v.visit_id = fl.visit_id
+                LEFT JOIN LATERAL (
+                    SELECT technician_identity, extracted_findings FROM labor_logs
+                    WHERE visit_id = fl.visit_id ORDER BY created_at DESC LIMIT 1
+                ) ll ON TRUE
+                {where_sql}
+                ORDER BY
+                    CASE fl.approval_state WHEN 'pending_review' THEN 0 ELSE 1 END,
+                    fl.created_at DESC
+                LIMIT %s
+                """,
+                tuple(params),
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+
+def list_finance_history(limit: int = 100) -> list[dict[str, Any]]:
+    """Legacy wrapper — returns only approved/rejected ledgers."""
+    return list_finance_ledgers(limit=limit)
+
+
+def get_visit_by_google_space_id(google_space_id: str) -> dict[str, Any] | None:
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT visit_id, slack_channel_id, google_space_id, location_string,
+                       metadata_poc, current_state::text AS current_state
+                FROM visits WHERE google_space_id = %s
+                """,
+                (google_space_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def get_visit_by_slack_channel_id(slack_channel_id: str) -> dict[str, Any] | None:
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT v.visit_id, v.slack_channel_id, v.google_space_id, v.location_string,
+                       v.metadata_poc, v.current_state::text AS current_state
+                FROM visits v
+                WHERE v.slack_channel_id = %s
+                UNION
+                SELECT v.visit_id, v.slack_channel_id, v.google_space_id, v.location_string,
+                       v.metadata_poc, v.current_state::text AS current_state
+                FROM slack_channel_visit_bindings b
+                JOIN visits v ON v.visit_id = b.visit_id
+                WHERE b.slack_channel_id = %s
+                LIMIT 1
+                """,
+                (slack_channel_id, slack_channel_id),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def get_visit_context_payload(visit_id: str) -> dict[str, Any]:
+    detail = get_visit_detail(visit_id)
+    if not detail:
+        return {"status": "error", "message": f"visit_id {visit_id} not found."}
+    active_log = next(
+        (log for log in detail.get("labor_logs", []) if log.get("clock_in") and not log.get("clock_out")),
+        None,
+    )
+    return {
+        "status": "success",
+        "visit_id": str(detail["visit_id"]),
+        "location_string": detail["location_string"],
+        "current_state": detail["current_state"],
+        "slack_channel_id": detail.get("slack_channel_id"),
+        "google_space_id": detail.get("google_space_id"),
+        "metadata_poc": detail.get("metadata_poc"),
+        "active_clock_in": active_log["clock_in"].isoformat() if active_log else None,
+        "labor_log_count": len(detail.get("labor_logs", [])),
+    }
+
+
+def upsert_channel_ingestion_cursor(
+    *,
+    channel_type: str,
+    channel_id: str,
+    visit_id: str | None,
+    last_message_time: datetime | None,
+    last_message_name: str | None,
+) -> None:
+    with sync_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO channel_ingestion_cursors
+                    (channel_type, channel_id, visit_id, last_message_time, last_message_name)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (channel_type, channel_id) DO UPDATE SET
+                    visit_id = COALESCE(EXCLUDED.visit_id, channel_ingestion_cursors.visit_id),
+                    last_message_time = COALESCE(EXCLUDED.last_message_time, channel_ingestion_cursors.last_message_time),
+                    last_message_name = COALESCE(EXCLUDED.last_message_name, channel_ingestion_cursors.last_message_name),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (channel_type, channel_id, visit_id, last_message_time, last_message_name),
+            )
+
+
+def touch_web_chat_session(
+    *,
+    session_id: str,
+    user_identity: str,
+    visit_id: str | None,
+) -> None:
+    with sync_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO web_chat_sessions (session_id, user_identity, visit_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (session_id) DO UPDATE SET
+                    visit_id = COALESCE(EXCLUDED.visit_id, web_chat_sessions.visit_id),
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (session_id, user_identity, visit_id),
+            )
+

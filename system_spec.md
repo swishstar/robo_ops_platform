@@ -24,11 +24,29 @@ Functional Scope
 
 Interface
 
-Workspace Client
+Ops & Finance Web App
 
-Google Chat Spaces API
+React SPA on Cloud Run (IAP)
 
-Dynamically provisions separate chat spaces for individual visits and financial review channels.
+Primary service-request intake (+ New Service Request form), timekeeping UI, finance approval/history tables, and embedded Web Chat for NL queries about process/data. Finance approval uses the web app (not Chat Cards).
+
+Web Chat (embedded)
+
+POST /api/v1/web-chat/message
+
+Authenticated per-user session; separate from channel-listening agents. Supports NL commands including clock in/out via shared ADK tools.
+
+Workspace Client — Google Chat (internal)
+
+Google Chat Spaces API + /webhooks/google-chat
+
+Internal visit spaces; invitable agent for RAG, field-learnings capture, and NL timekeeping.
+
+Workspace Client — Slack (external)
+
+Slack Events API + /webhooks/slack
+
+Client-facing channels, external technical discussion; parallel agent integration to Google Chat. New visit requests are created via the web app's POST /api/v1/visits (Slack can call this API).
 
 Ingestion
 
@@ -147,7 +165,7 @@ CREATE TABLE immutable_audit_trail (
 
 4. System Workflow State Transitions
 
-Intake: Customer request received via Slack webhook -> Cloud Function processes payload -> Cloud Run Orchestrator creates a dedicated Google Chat Space for the visit and logs record as initiated.
+Intake: Customer request submitted via Ops Web App (POST /api/v1/visits) or Slack API call -> Cloud Run Orchestrator creates a dedicated Google Chat Space for the visit and logs record as initiated.
 
 Support: Technician enters Google Chat space -> Conversational RAG queries SOP folder (/03_Technical_Library) via the Search Extension -> ADK platform serves grounded answers with inline citations.
 
@@ -155,7 +173,7 @@ Completion: Tech submits clock-out message -> Agent parses parameters -> Passes 
 
 Validation: Deterministic tool code calculates time differences, checks business rules (e.g. clock_out > clock_in), saves status as pending_approval in PostgreSQL, and locks transaction state.
 
-Approval: Orchestrator formats an interactive Card and posts it to the secure Financial Review Channel.
+Approval: Finance manager reviews pending ledgers in the Ops Web App and approves or rejects via POST /api/v1/finance/approve (optional Chat notification with deep-link only).
 
 Execution: Accounting manager clicks "Approve" -> Secure callback endpoint triggers remote MCP calls to QuickBooks Online (creating invoices and technician pay records) and LinkedIn (staging social media posts).
 

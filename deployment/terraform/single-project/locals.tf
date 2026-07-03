@@ -11,6 +11,7 @@ locals {
   sql_instance_name   = "${var.name_prefix}-pg-${var.environment}"
   artifact_repo_id    = "${var.name_prefix}-images"
   orchestrator_name   = "${var.name_prefix}-orchestrator"
+  web_app_name        = "${var.name_prefix}-ops-web"
   mcp_qbo_name        = "${var.name_prefix}-mcp-qbo"
   mcp_linkedin_name   = "${var.name_prefix}-mcp-linkedin"
   orchestrator_sa_id  = "${var.name_prefix}-orchestrator"
