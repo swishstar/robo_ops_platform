@@ -43,39 +43,44 @@ class ClockInRequest(BaseModel):
     technician_identity: Optional[str] = None
 
 
-ServiceType = Literal[
-    "installation",
-    "preventive_maintenance",
-    "repair",
-    "emergency",
-    "training",
-    "other",
+CompletionStatus = Literal[
+    "yes_fully_completed",
+    "no_still_pending",
+    "na_diagnosis_only",
 ]
 
-RobotPlatform = Literal[
-    "food_service",
-    "warehouse_logistics",
-    "agriculture",
-    "healthcare",
-    "humanoid",
-    "other",
+FollowUpStatus = Literal[
+    "no_complete",
+    "yes_return_visit",
+    "yes_remote_followup",
 ]
+
+WorkCategory = Literal[
+    "installation_setup",
+    "troubleshooting_diagnosis",
+    "repair_maintenance",
+    "consultation_training",
+    "preventative_check",
+    "software_update_configuration",
+]
+
+
+class MediaFileRef(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    size_bytes: int = Field(..., ge=0, le=1_073_741_824)
 
 
 class TimesheetMetadata(BaseModel):
     service_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
-    robot_platform: Optional[RobotPlatform] = None
-    robot_model: Optional[str] = Field(default=None, max_length=120)
-    serial_number: Optional[str] = Field(default=None, max_length=120)
-    service_type: Optional[ServiceType] = None
-    break_minutes: int = Field(default=0, ge=0, le=480)
-    issues_found: Optional[str] = Field(default=None, max_length=4000)
-    resolution: Optional[str] = Field(default=None, max_length=4000)
-    parts_used: Optional[str] = Field(default=None, max_length=2000)
-    travel_miles: Optional[float] = Field(default=None, ge=0, le=2000)
-    travel_hours: Optional[float] = Field(default=None, ge=0, le=24)
-    expenses_cents: Optional[int] = Field(default=None, ge=0)
-    follow_up_required: bool = False
+    customer_site_name: Optional[str] = Field(default=None, max_length=255)
+    work_order_number: Optional[str] = Field(default=None, max_length=120)
+    invoice_number: Optional[str] = Field(default=None, max_length=120)
+    completion_status: Optional[CompletionStatus] = None
+    follow_up_status: Optional[FollowUpStatus] = None
+    difficulty_rating: Optional[int] = Field(default=None, ge=1, le=5)
+    work_categories: list[WorkCategory] = Field(default_factory=list, max_length=6)
+    tools_equipment: Optional[str] = Field(default=None, max_length=2000)
+    media_files: list[MediaFileRef] = Field(default_factory=list, max_length=10)
     attestation: bool = False
 
 
@@ -181,11 +186,38 @@ async def api_signoff(
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     identity = body.technician_identity or user.email
-    if body.timesheet and not body.timesheet.attestation:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Timesheet attestation is required before sign-off.",
-        )
+    if body.timesheet:
+        ts = body.timesheet
+        if not ts.attestation:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Timesheet attestation is required before sign-off.",
+            )
+        if not ts.service_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Date of site visit is required.",
+            )
+        if not ts.completion_status:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Work completion status is required.",
+            )
+        if not ts.follow_up_status:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Follow-up status is required.",
+            )
+        if ts.difficulty_rating is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Difficulty rating is required.",
+            )
+        if not ts.work_categories:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Select at least one work category.",
+            )
     timesheet_payload = body.timesheet.model_dump(exclude_none=True) if body.timesheet else None
     result = process_visit_signoff(
         visit_id=visit_id,

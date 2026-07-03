@@ -1,7 +1,7 @@
 import {
-  formatCents,
-  platformLabel,
-  serviceTypeLabel,
+  completionStatusLabel,
+  followUpStatusLabel,
+  workCategoryLabel,
   type TimesheetMetadata,
 } from "../constants/timesheet";
 
@@ -20,80 +20,68 @@ export function TimesheetSummary({ metadata }: TimesheetSummaryProps) {
       <dl className="detail-grid">
         {metadata.service_date && (
           <>
-            <dt>Service date</dt>
+            <dt>Date of site visit</dt>
             <dd>{metadata.service_date}</dd>
           </>
         )}
-        {metadata.robot_platform && (
+        {metadata.customer_site_name && (
           <>
-            <dt>Robot platform</dt>
-            <dd>{platformLabel(metadata.robot_platform)}</dd>
+            <dt>Customer / site</dt>
+            <dd>{metadata.customer_site_name}</dd>
           </>
         )}
-        {metadata.robot_model && (
+        {metadata.work_order_number && (
           <>
-            <dt>Robot model</dt>
-            <dd>{metadata.robot_model}</dd>
+            <dt>Work order</dt>
+            <dd>{metadata.work_order_number}</dd>
           </>
         )}
-        {metadata.serial_number && (
+        {metadata.invoice_number && (
           <>
-            <dt>Serial / asset ID</dt>
-            <dd>{metadata.serial_number}</dd>
+            <dt>Invoice number</dt>
+            <dd>{metadata.invoice_number}</dd>
           </>
         )}
-        {metadata.service_type && (
+        {metadata.completion_status && (
           <>
-            <dt>Service type</dt>
-            <dd>{serviceTypeLabel(metadata.service_type)}</dd>
+            <dt>Work completed</dt>
+            <dd>{completionStatusLabel(metadata.completion_status)}</dd>
           </>
         )}
-        {metadata.break_minutes != null && metadata.break_minutes > 0 && (
-          <>
-            <dt>Break time</dt>
-            <dd>{metadata.break_minutes} min</dd>
-          </>
-        )}
-        {metadata.issues_found && (
-          <>
-            <dt>Issues found</dt>
-            <dd>{metadata.issues_found}</dd>
-          </>
-        )}
-        {metadata.resolution && (
-          <>
-            <dt>Resolution</dt>
-            <dd>{metadata.resolution}</dd>
-          </>
-        )}
-        {metadata.parts_used && (
-          <>
-            <dt>Parts used</dt>
-            <dd>{metadata.parts_used}</dd>
-          </>
-        )}
-        {metadata.travel_miles != null && (
-          <>
-            <dt>Travel miles</dt>
-            <dd>{metadata.travel_miles}</dd>
-          </>
-        )}
-        {metadata.travel_hours != null && (
-          <>
-            <dt>Travel time</dt>
-            <dd>{metadata.travel_hours} hr</dd>
-          </>
-        )}
-        {metadata.expenses_cents != null && (
-          <>
-            <dt>Expenses</dt>
-            <dd>{formatCents(metadata.expenses_cents)}</dd>
-          </>
-        )}
-        {metadata.follow_up_required && (
+        {metadata.follow_up_status && (
           <>
             <dt>Follow-up</dt>
-            <dd>Required</dd>
+            <dd>{followUpStatusLabel(metadata.follow_up_status)}</dd>
+          </>
+        )}
+        {metadata.difficulty_rating != null && (
+          <>
+            <dt>Difficulty</dt>
+            <dd>{metadata.difficulty_rating} / 5</dd>
+          </>
+        )}
+        {metadata.work_categories && metadata.work_categories.length > 0 && (
+          <>
+            <dt>Work categories</dt>
+            <dd>{metadata.work_categories.map(workCategoryLabel).join(", ")}</dd>
+          </>
+        )}
+        {metadata.tools_equipment && (
+          <>
+            <dt>Tools / equipment</dt>
+            <dd>{metadata.tools_equipment}</dd>
+          </>
+        )}
+        {metadata.media_files && metadata.media_files.length > 0 && (
+          <>
+            <dt>Media files</dt>
+            <dd>
+              <ul className="media-file-list compact">
+                {metadata.media_files.map((file) => (
+                  <li key={file.name}>{file.name}</li>
+                ))}
+              </ul>
+            </dd>
           </>
         )}
       </dl>

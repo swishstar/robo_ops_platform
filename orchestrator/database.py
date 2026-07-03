@@ -15,6 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import math
 from typing import Any, Iterator
 from uuid import UUID, uuid4
 
@@ -608,17 +609,12 @@ def _billable_hours(
     clock_out: datetime,
     timesheet_metadata: dict[str, Any] | None = None,
 ) -> float:
-    """Compute billable hours after optional break deduction."""
-    metadata = timesheet_metadata or {}
-    break_minutes = metadata.get("break_minutes", 0)
-    try:
-        break_minutes = max(0, int(break_minutes))
-    except (TypeError, ValueError):
-        break_minutes = 0
-
+    """Compute billable hours rounded up to the nearest 15 minutes."""
+    del timesheet_metadata  # reserved for future billing rules
     duration_seconds = (clock_out - clock_in).total_seconds()
-    billable_seconds = max(0.0, duration_seconds - (break_minutes * 60))
-    return round(billable_seconds / 3600.0, 4)
+    duration_minutes = duration_seconds / 60.0
+    rounded_minutes = math.ceil(duration_minutes / 15.0) * 15.0
+    return round(rounded_minutes / 60.0, 4)
 
 
 def process_visit_signoff_transaction(

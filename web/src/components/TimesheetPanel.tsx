@@ -1,14 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, VisitDetail } from "../api/client";
-import { getStoredUser } from "../api/client";
+import { api, getStoredUser, VisitDetail } from "../api/client";
 import {
-  ROBOT_PLATFORMS,
-  SERVICE_TYPES,
-  type RobotPlatform,
-  type ServiceType,
+  COMPLETION_STATUSES,
+  computeBillableHours,
+  FOLLOW_UP_STATUSES,
+  formatBillableHours,
+  WORK_CATEGORIES,
+  type CompletionStatus,
+  type FollowUpStatus,
+  type MediaFileRef,
   type TimesheetMetadata,
+  type WorkCategory,
 } from "../constants/timesheet";
+
+const MAX_MEDIA_FILES = 10;
+const MAX_MEDIA_BYTES = 1_073_741_824;
 
 function toDatetimeLocalValue(iso: string | null | undefined): string {
   if (!iso) return "";
@@ -21,15 +28,6 @@ function todayDateValue(): string {
   const d = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-function computeBillableHours(clockIn: string, clockOut: string, breakMinutes: number): number {
-  if (!clockIn || !clockOut) return 0;
-  const start = new Date(clockIn).getTime();
-  const end = new Date(clockOut).getTime();
-  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return 0;
-  const hours = (end - start) / 3_600_000 - breakMinutes / 60;
-  return Math.max(0, Math.round(hours * 100) / 100);
 }
 
 interface TimesheetPanelProps {
@@ -45,21 +43,18 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
   const canSignoff = visit.current_state === "active" && !!activeLog;
 
   const [serviceDate, setServiceDate] = useState(todayDateValue());
-  const [robotPlatform, setRobotPlatform] = useState<RobotPlatform | "">("");
-  const [robotModel, setRobotModel] = useState("");
-  const [serialNumber, setSerialNumber] = useState("");
-  const [serviceType, setServiceType] = useState<ServiceType | "">("");
+  const [workOrderNumber, setWorkOrderNumber] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
   const [clockIn, setClockIn] = useState("");
   const [clockOut, setClockOut] = useState("");
-  const [breakMinutes, setBreakMinutes] = useState("0");
   const [findings, setFindings] = useState("");
-  const [issuesFound, setIssuesFound] = useState("");
-  const [resolution, setResolution] = useState("");
-  const [partsUsed, setPartsUsed] = useState("");
-  const [travelMiles, setTravelMiles] = useState("");
-  const [travelHours, setTravelHours] = useState("");
-  const [expenses, setExpenses] = useState("");
-  const [followUpRequired, setFollowUpRequired] = useState(false);
+  const [mediaFiles, setMediaFiles] = useState<MediaFileRef[]>([]);
+  const [mediaError, setMediaError] = useState("");
+  const [completionStatus, setCompletionStatus] = useState<CompletionStatus | "">("");
+  const [followUpStatus, setFollowUpStatus] = useState<FollowUpStatus | "">("");
+  const [difficultyRating, setDifficultyRating] = useState<number | null>(null);
+  const [workCategories, setWorkCategories] = useState<WorkCategory[]>([]);
+  const [toolsEquipment, setToolsEquipment] = useState("");
   const [attestation, setAttestation] = useState(false);
 
   useEffect(() => {
@@ -73,12 +68,8 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
 
   const billableHours = useMemo(() => {
     if (!clockIn || !clockOut) return 0;
-    return computeBillableHours(
-      new Date(clockIn).toISOString(),
-      new Date(clockOut).toISOString(),
-      Number(breakMinutes) || 0,
-    );
-  }, [clockIn, clockOut, breakMinutes]);
+    return computeBillableHours(new Date(clockIn).toISOString(), new Date(clockOut).toISOString());
+  }, [clockIn, clockOut]);
 
   const clockInMut = useMutation({
     mutationFn: () => api.clockIn(visitId),
@@ -89,18 +80,15 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
     mutationFn: () => {
       const timesheet: TimesheetMetadata = {
         service_date: serviceDate,
-        robot_platform: robotPlatform || undefined,
-        robot_model: robotModel.trim() || undefined,
-        serial_number: serialNumber.trim() || undefined,
-        service_type: serviceType || undefined,
-        break_minutes: Number(breakMinutes) || 0,
-        issues_found: issuesFound.trim() || undefined,
-        resolution: resolution.trim() || undefined,
-        parts_used: partsUsed.trim() || undefined,
-        travel_miles: travelMiles ? Number(travelMiles) : undefined,
-        travel_hours: travelHours ? Number(travelHours) : undefined,
-        expenses_cents: expenses ? Math.round(Number(expenses) * 100) : undefined,
-        follow_up_required: followUpRequired,
+        customer_site_name: visit.location_string,
+        work_order_number: workOrderNumber.trim() || undefined,
+        invoice_number: invoiceNumber.trim() || undefined,
+        completion_status: completionStatus || undefined,
+        follow_up_status: followUpStatus || undefined,
+        difficulty_rating: difficultyRating ?? undefined,
+        work_categories: workCategories,
+        tools_equipment: toolsEquipment.trim() || undefined,
+        media_files: mediaFiles.length ? mediaFiles : undefined,
         attestation,
       };
       return api.signoff(visitId, {
@@ -113,20 +101,52 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["visit", visitId] }),
   });
 
+  function toggleWorkCategory(category: WorkCategory) {
+    setWorkCategories((prev) =>
+      prev.includes(category) ? prev.filter((c) => c !== category) : [...prev, category],
+    );
+  }
+
+  function handleMediaChange(files: FileList | null) {
+    setMediaError("");
+    if (!files?.length) {
+      setMediaFiles([]);
+      return;
+    }
+    if (files.length > MAX_MEDIA_FILES) {
+      setMediaError(`Upload up to ${MAX_MEDIA_FILES} files.`);
+      return;
+    }
+    const next: MediaFileRef[] = [];
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_MEDIA_BYTES) {
+        setMediaError(`${file.name} exceeds the 1 GB limit.`);
+        return;
+      }
+      next.push({ name: file.name, size_bytes: file.size });
+    }
+    setMediaFiles(next);
+  }
+
   const signoffValid =
-    !!robotPlatform &&
-    !!serviceType &&
+    !!serviceDate &&
     !!clockIn &&
     !!clockOut &&
     findings.length >= 8 &&
+    !!completionStatus &&
+    !!followUpStatus &&
+    difficultyRating != null &&
+    workCategories.length > 0 &&
     attestation &&
-    billableHours > 0;
+    billableHours > 0 &&
+    !mediaError;
 
   return (
     <div className="panel timesheet-panel">
-      <h2>Timesheet</h2>
+      <h2>Technician Site Visit Timesheet</h2>
       <p className="hint">
-        Structured sign-off replaces the legacy Google Form. Visit context is pre-filled where possible.
+        Log arrival and departure times for this site visit. Total hours are calculated and rounded
+        up to the nearest 15 minutes.
       </p>
 
       {activeLog && (
@@ -137,7 +157,7 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
 
       {canClockIn && (
         <button type="button" onClick={() => clockInMut.mutate()} disabled={clockInMut.isPending}>
-          Clock In
+          Clock In (Arrival)
         </button>
       )}
 
@@ -153,77 +173,37 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
             <legend>Technician &amp; site</legend>
             <div className="form-grid">
               <label>
-                Technician email
+                Email
                 <input type="email" value={user.email} readOnly />
               </label>
               <label>
-                Date of service
+                Customer / site name
+                <input type="text" value={visit.location_string} readOnly />
+              </label>
+              <label>
+                Client work order or job number
+                <input
+                  value={workOrderNumber}
+                  onChange={(e) => setWorkOrderNumber(e.target.value)}
+                  placeholder="If applicable"
+                />
+              </label>
+              <label>
+                Your invoice number
+                <input
+                  value={invoiceNumber}
+                  onChange={(e) => setInvoiceNumber(e.target.value)}
+                  placeholder="If applicable"
+                />
+              </label>
+              <label>
+                Date of site visit
                 <input
                   type="date"
                   value={serviceDate}
                   onChange={(e) => setServiceDate(e.target.value)}
                   required
                 />
-              </label>
-              <label>
-                Client / POC
-                <input type="text" value={visit.metadata_poc.name} readOnly />
-              </label>
-              <label>
-                Service location
-                <input type="text" value={visit.location_string} readOnly />
-              </label>
-            </div>
-          </fieldset>
-
-          <fieldset>
-            <legend>Robot &amp; service</legend>
-            <div className="form-grid">
-              <label>
-                Robot platform
-                <select
-                  value={robotPlatform}
-                  onChange={(e) => setRobotPlatform(e.target.value as RobotPlatform)}
-                  required
-                >
-                  <option value="">Select platform…</option>
-                  {ROBOT_PLATFORMS.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Robot model / make
-                <input
-                  value={robotModel}
-                  onChange={(e) => setRobotModel(e.target.value)}
-                  placeholder="e.g. Servi Plus, Locus Origin"
-                />
-              </label>
-              <label>
-                Serial / asset ID
-                <input
-                  value={serialNumber}
-                  onChange={(e) => setSerialNumber(e.target.value)}
-                  placeholder="Robot serial or asset tag"
-                />
-              </label>
-              <label>
-                Service type
-                <select
-                  value={serviceType}
-                  onChange={(e) => setServiceType(e.target.value as ServiceType)}
-                  required
-                >
-                  <option value="">Select service type…</option>
-                  {SERVICE_TYPES.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
               </label>
             </div>
           </fieldset>
@@ -232,7 +212,7 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
             <legend>Time on site</legend>
             <div className="form-grid">
               <label>
-                Start time
+                Time of arrival (on site)
                 <input
                   type="datetime-local"
                   value={clockIn}
@@ -241,7 +221,7 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
                 />
               </label>
               <label>
-                End time
+                Time of departure (from site)
                 <input
                   type="datetime-local"
                   value={clockOut}
@@ -250,18 +230,8 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
                 />
               </label>
               <label>
-                Break / lunch (minutes)
-                <input
-                  type="number"
-                  min={0}
-                  max={480}
-                  value={breakMinutes}
-                  onChange={(e) => setBreakMinutes(e.target.value)}
-                />
-              </label>
-              <label>
-                Billable hours
-                <input type="text" value={billableHours.toFixed(2)} readOnly />
+                Billable time (rounded up to 15 min)
+                <input type="text" value={formatBillableHours(billableHours)} readOnly />
               </label>
             </div>
           </fieldset>
@@ -269,105 +239,157 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
           <fieldset>
             <legend>Work performed</legend>
             <label>
-              Description of work performed
+              Detailed description of work performed
               <textarea
                 value={findings}
                 onChange={(e) => setFindings(e.target.value)}
-                rows={4}
+                rows={5}
                 required
                 minLength={8}
-                placeholder="Summarize tasks completed on site"
-              />
-            </label>
-            <label>
-              Issues found
-              <textarea
-                value={issuesFound}
-                onChange={(e) => setIssuesFound(e.target.value)}
-                rows={3}
-                placeholder="Errors, faults, or observations"
-              />
-            </label>
-            <label>
-              Resolution / outcome
-              <textarea
-                value={resolution}
-                onChange={(e) => setResolution(e.target.value)}
-                rows={3}
-                placeholder="What was fixed, replaced, or escalated"
-              />
-            </label>
-            <label>
-              Parts / materials used
-              <textarea
-                value={partsUsed}
-                onChange={(e) => setPartsUsed(e.target.value)}
-                rows={2}
-                placeholder="Part numbers, quantities, consumables"
+                placeholder="Describe the work completed on site"
               />
             </label>
           </fieldset>
 
           <fieldset>
-            <legend>Travel &amp; expenses</legend>
-            <div className="form-grid">
-              <label>
-                Travel miles
-                <input
-                  type="number"
-                  min={0}
-                  step={0.1}
-                  value={travelMiles}
-                  onChange={(e) => setTravelMiles(e.target.value)}
-                  placeholder="Round-trip or one-way"
-                />
-              </label>
-              <label>
-                Travel time (hours)
-                <input
-                  type="number"
-                  min={0}
-                  step={0.25}
-                  value={travelHours}
-                  onChange={(e) => setTravelHours(e.target.value)}
-                />
-              </label>
-              <label>
-                Out-of-pocket expenses ($)
-                <input
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  value={expenses}
-                  onChange={(e) => setExpenses(e.target.value)}
-                />
-              </label>
+            <legend>Photos / videos</legend>
+            <p className="field-help">
+              Before/after repair, spoofing video, etc. Upload up to 10 supported files (max 1 GB
+              each). Large files or spoofing videos can also be sent via the visit Google Chat or
+              Slack channel.
+            </p>
+            <input
+              type="file"
+              multiple
+              accept="image/*,video/*"
+              onChange={(e) => handleMediaChange(e.target.files)}
+            />
+            {mediaFiles.length > 0 && (
+              <ul className="media-file-list">
+                {mediaFiles.map((file) => (
+                  <li key={file.name}>
+                    {file.name} ({(file.size_bytes / 1024 / 1024).toFixed(1)} MB)
+                  </li>
+                ))}
+              </ul>
+            )}
+            {mediaError && <p className="error">{mediaError}</p>}
+          </fieldset>
+
+          <fieldset>
+            <legend>Visit outcome</legend>
+            <div className="field-group">
+              <span className="field-label">Was the work completed satisfactorily?</span>
+              <div className="radio-group">
+                {COMPLETION_STATUSES.map((option) => (
+                  <label key={option.value} className="radio-label">
+                    <input
+                      type="radio"
+                      name="completion_status"
+                      value={option.value}
+                      checked={completionStatus === option.value}
+                      onChange={() => setCompletionStatus(option.value)}
+                      required
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="field-group">
+              <span className="field-label">Did this visit require any follow-up or next steps?</span>
+              <div className="radio-group">
+                {FOLLOW_UP_STATUSES.map((option) => (
+                  <label key={option.value} className="radio-label">
+                    <input
+                      type="radio"
+                      name="follow_up_status"
+                      value={option.value}
+                      checked={followUpStatus === option.value}
+                      onChange={() => setFollowUpStatus(option.value)}
+                      required
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </div>
             </div>
           </fieldset>
 
           <fieldset>
-            <legend>Sign-off</legend>
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={followUpRequired}
-                onChange={(e) => setFollowUpRequired(e.target.checked)}
+            <legend>Analytics</legend>
+            <div className="field-group">
+              <span className="field-label">
+                Rate the level of difficulty for the work performed on site
+              </span>
+              <div className="difficulty-scale">
+                <span className="scale-end">Very Low</span>
+                {[1, 2, 3, 4, 5].map((value) => (
+                  <label key={value} className="scale-option">
+                    <input
+                      type="radio"
+                      name="difficulty_rating"
+                      value={value}
+                      checked={difficultyRating === value}
+                      onChange={() => setDifficultyRating(value)}
+                      required
+                    />
+                    {value}
+                  </label>
+                ))}
+                <span className="scale-end">Very High</span>
+              </div>
+            </div>
+
+            <div className="field-group">
+              <span className="field-label">
+                Which categories best describe the type of work performed? (Select all that apply)
+              </span>
+              <div className="checkbox-group">
+                {WORK_CATEGORIES.map((category) => (
+                  <label key={category.value} className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={workCategories.includes(category.value)}
+                      onChange={() => toggleWorkCategory(category.value)}
+                    />
+                    {category.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <label>
+              Which tools or specialized equipment were essential for completing the work?
+              <textarea
+                value={toolsEquipment}
+                onChange={(e) => setToolsEquipment(e.target.value)}
+                rows={3}
+                placeholder="List tools, test equipment, lifts, etc."
               />
-              Follow-up visit required
             </label>
-            <label className="checkbox-label">
+          </fieldset>
+
+          <fieldset>
+            <legend>Confirmation</legend>
+            <label className="checkbox-label attestation-label">
               <input
                 type="checkbox"
                 checked={attestation}
                 onChange={(e) => setAttestation(e.target.checked)}
                 required
               />
-              I certify that this timesheet is accurate and complete
+              <span>
+                I confirm that the recorded date, arrival time, and departure time are accurate and
+                ready for submission/customer billing. I understand that the total time will be
+                calculated and rounded up to the nearest 15 minutes.
+              </span>
             </label>
           </fieldset>
 
           <button type="submit" className="primary" disabled={!signoffValid || signoffMut.isPending}>
-            {signoffMut.isPending ? "Submitting…" : "Submit Timesheet & Sign Off"}
+            {signoffMut.isPending ? "Submitting…" : "Submit Timesheet"}
           </button>
         </form>
       )}
