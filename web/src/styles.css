@@ -168,6 +168,61 @@ select {
   margin-top: 0.25rem;
 }
 
+.timesheet-panel .hint {
+  font-size: 0.85rem;
+  color: #64748b;
+  margin-top: 0;
+}
+
+.timesheet-status {
+  font-size: 0.9rem;
+  color: #334155;
+}
+
+.timesheet-form fieldset {
+  margin-top: 1rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.75rem;
+}
+
+.form-grid label,
+.timesheet-form > fieldset > label {
+  display: block;
+  margin-bottom: 0;
+}
+
+.checkbox-label {
+  display: flex !important;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: auto;
+  margin-top: 0.25rem;
+}
+
+.timesheet-form select {
+  display: block;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  font-size: 0.9rem;
+}
+
+.timesheet-summary h3 {
+  margin-top: 0;
+  font-size: 1rem;
+}
+
 .web-chat {
   margin-top: 1.5rem;
   border-top: 1px solid #e2e8f0;

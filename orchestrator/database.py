@@ -603,6 +603,24 @@ def get_visit_by_id(visit_id: str) -> dict[str, Any] | None:
             return dict(row) if row else None
 
 
+def _billable_hours(
+    clock_in: datetime,
+    clock_out: datetime,
+    timesheet_metadata: dict[str, Any] | None = None,
+) -> float:
+    """Compute billable hours after optional break deduction."""
+    metadata = timesheet_metadata or {}
+    break_minutes = metadata.get("break_minutes", 0)
+    try:
+        break_minutes = max(0, int(break_minutes))
+    except (TypeError, ValueError):
+        break_minutes = 0
+
+    duration_seconds = (clock_out - clock_in).total_seconds()
+    billable_seconds = max(0.0, duration_seconds - (break_minutes * 60))
+    return round(billable_seconds / 3600.0, 4)
+
+
 def process_visit_signoff_transaction(
     *,
     visit_id: str,
@@ -610,6 +628,7 @@ def process_visit_signoff_transaction(
     clock_in: datetime,
     clock_out: datetime,
     text_findings: str,
+    timesheet_metadata: dict[str, Any] | None = None,
 ) -> SignoffResult:
     """
     Deterministic sign-off pipeline:
@@ -625,8 +644,14 @@ def process_visit_signoff_transaction(
             message="Validation Failed: Clock-out time cannot precede Clock-in time.",
         )
 
-    duration_seconds = (clock_out - clock_in).total_seconds()
-    duration_hours = round(duration_seconds / 3600.0, 4)
+    metadata = dict(timesheet_metadata or {})
+    duration_hours = _billable_hours(clock_in, clock_out, metadata)
+    if duration_hours <= 0:
+        return SignoffResult(
+            status="error",
+            visit_id=visit_id,
+            message="Validation Failed: Billable hours must be greater than zero after breaks.",
+        )
     invoice_cents = int(duration_hours * CLIENT_INVOICE_CENTS_PER_HOUR)
     payout_cents = int(duration_hours * CONTRACTOR_PAYOUT_CENTS_PER_HOUR)
     finance_cfg = get_platform_config("finance")
@@ -684,11 +709,19 @@ def process_visit_signoff_transaction(
             cur.execute(
                 """
                 INSERT INTO labor_logs
-                    (visit_id, technician_identity, clock_in, clock_out, extracted_findings, is_verified)
-                VALUES (%s, %s, %s, %s, %s, TRUE)
+                    (visit_id, technician_identity, clock_in, clock_out,
+                     extracted_findings, timesheet_metadata, is_verified)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, TRUE)
                 RETURNING log_id
                 """,
-                (visit_id, technician_identity, clock_in, clock_out, text_findings),
+                (
+                    visit_id,
+                    technician_identity,
+                    clock_in,
+                    clock_out,
+                    text_findings,
+                    json.dumps(metadata),
+                ),
             )
             labor_log_id = cur.fetchone()["log_id"]
 
@@ -827,7 +860,7 @@ def get_visit_detail(visit_id: str) -> dict[str, Any] | None:
             cur.execute(
                 """
                 SELECT log_id, technician_identity, clock_in, clock_out,
-                       extracted_findings, is_verified, created_at
+                       extracted_findings, timesheet_metadata, is_verified, created_at
                 FROM labor_logs
                 WHERE visit_id = %s
                 ORDER BY created_at DESC
@@ -955,11 +988,12 @@ def get_finance_ledger_detail(ledger_id: str) -> dict[str, Any] | None:
                        v.location_string, v.metadata_poc, v.current_state::text AS visit_state,
                        v.slack_channel_id, v.google_space_id,
                        ll.technician_identity, ll.clock_in, ll.clock_out,
-                       ll.extracted_findings
+                       ll.extracted_findings, ll.timesheet_metadata
                 FROM financial_ledgers fl
                 JOIN visits v ON v.visit_id = fl.visit_id
                 LEFT JOIN LATERAL (
-                    SELECT technician_identity, clock_in, clock_out, extracted_findings
+                    SELECT technician_identity, clock_in, clock_out,
+                           extracted_findings, timesheet_metadata
                     FROM labor_logs WHERE visit_id = fl.visit_id
                     ORDER BY created_at DESC LIMIT 1
                 ) ll ON TRUE

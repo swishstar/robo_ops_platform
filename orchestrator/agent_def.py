@@ -139,6 +139,7 @@ def process_visit_signoff(
     clock_out_str: str,
     text_findings: str,
     technician_identity: str = "field.tech@roboreliance.internal",
+    timesheet_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Executes core server validation on time entries, calculates billing bounds,
@@ -178,6 +179,7 @@ def process_visit_signoff(
             clock_in=t_in,
             clock_out=t_out,
             text_findings=findings,
+            timesheet_metadata=timesheet_metadata,
         )
 
         if result.status != "success":

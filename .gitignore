@@ -28,3 +28,4 @@ terraform.tfvars
 !*.tfvars.example
 tfplan
 
+*.tsbuildinfo

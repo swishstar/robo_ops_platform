@@ -43,11 +43,48 @@ class ClockInRequest(BaseModel):
     technician_identity: Optional[str] = None
 
 
+ServiceType = Literal[
+    "installation",
+    "preventive_maintenance",
+    "repair",
+    "emergency",
+    "training",
+    "other",
+]
+
+RobotPlatform = Literal[
+    "food_service",
+    "warehouse_logistics",
+    "agriculture",
+    "healthcare",
+    "humanoid",
+    "other",
+]
+
+
+class TimesheetMetadata(BaseModel):
+    service_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    robot_platform: Optional[RobotPlatform] = None
+    robot_model: Optional[str] = Field(default=None, max_length=120)
+    serial_number: Optional[str] = Field(default=None, max_length=120)
+    service_type: Optional[ServiceType] = None
+    break_minutes: int = Field(default=0, ge=0, le=480)
+    issues_found: Optional[str] = Field(default=None, max_length=4000)
+    resolution: Optional[str] = Field(default=None, max_length=4000)
+    parts_used: Optional[str] = Field(default=None, max_length=2000)
+    travel_miles: Optional[float] = Field(default=None, ge=0, le=2000)
+    travel_hours: Optional[float] = Field(default=None, ge=0, le=24)
+    expenses_cents: Optional[int] = Field(default=None, ge=0)
+    follow_up_required: bool = False
+    attestation: bool = False
+
+
 class SignoffRequest(BaseModel):
     clock_in: datetime
     clock_out: datetime
     findings: str = Field(..., min_length=8)
     technician_identity: Optional[str] = None
+    timesheet: Optional[TimesheetMetadata] = None
 
 
 class FinanceActionRequest(BaseModel):
@@ -144,12 +181,19 @@ async def api_signoff(
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     identity = body.technician_identity or user.email
+    if body.timesheet and not body.timesheet.attestation:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Timesheet attestation is required before sign-off.",
+        )
+    timesheet_payload = body.timesheet.model_dump(exclude_none=True) if body.timesheet else None
     result = process_visit_signoff(
         visit_id=visit_id,
         clock_in_str=body.clock_in.isoformat(),
         clock_out_str=body.clock_out.isoformat(),
         text_findings=body.findings,
         technician_identity=identity,
+        timesheet_metadata=timesheet_payload,
     )
     if result.get("status") != "success":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=result.get("message"))
