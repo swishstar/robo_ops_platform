@@ -4,15 +4,17 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
 
 **Prerequisites:** `gcloud` CLI authenticated, billing enabled, Terraform ≥ 1.5, Docker (for local image builds if not using Cloud Build only).
 
+**Project:** `robo-reliance-ops` | **Region:** `us-central1` | **Environment:** `dev`
+
 ---
 
 ## Phase A — Configure
 
-- [ ] **A1. Choose GCP project and region**
-  - Example: `project_id = "robo-reliance-dev"`, `region = "us-central1"`
-  - Enable billing on the project.
+- [x] **A1. Choose GCP project and region**
+  - `project_id = "robo-reliance-ops"`, `region = "us-central1"`
+  - Billing enabled (Free Trial — note: Gemini API costs are not covered by free trial credits).
 
-- [ ] **A2. Create Terraform variables file**
+- [x] **A2. Create Terraform variables file**
   ```bash
   cp deployment/terraform/single-project/terraform.tfvars.example \
      deployment/terraform/single-project/terraform.tfvars
@@ -32,7 +34,7 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
 
 ## Phase B — Provision infrastructure
 
-- [ ] **B1. Apply Terraform**
+- [x] **B1. Apply Terraform**
   ```bash
   ./deployment/scripts/bootstrap-infra.sh
   ```
@@ -44,7 +46,7 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
   terraform apply tfplan
   ```
 
-- [ ] **B2. Record Terraform outputs**
+- [x] **B2. Record Terraform outputs**
   ```bash
   cd deployment/terraform/single-project
   terraform output orchestrator_url
@@ -56,97 +58,97 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
   **Expected resources created:**
   - VPC + subnet + Private Service Access + VPC connector
   - Cloud SQL PostgreSQL 15 (private IP)
-  - Secret Manager: `inner-loop-database-url-{env}`, `inner-loop-google-api-key-{env}`
+  - Secret Manager: `inner-loop-database-url-dev`, `inner-loop-google-api-key-dev`
   - Artifact Registry: `inner-loop-images`
-  - Cloud Run: `inner-loop-orchestrator`, `inner-loop-mcp-qbo`, `inner-loop-mcp-linkedin`
+  - Cloud Run: `inner-loop-orchestrator`, `inner-loop-mcp-qbo`, `inner-loop-mcp-linkedin`, `inner-loop-ops-web`
   - Service accounts: orchestrator, MCP, CI/CD
+
+  **Note:** `allUsers` public access blocked by org policy `iam.allowedPolicyMemberDomains`. Services require authenticated access via identity token or `gcloud run services proxy`.
 
 ---
 
 ## Phase C — Secrets & database
 
-- [ ] **C1. Set Gemini API key**
+- [x] **C1. Set Gemini API key**
   ```bash
-  # Replace secret name if environment != dev
   echo -n 'YOUR_GEMINI_API_KEY' | gcloud secrets versions add \
     inner-loop-google-api-key-dev \
-    --project=YOUR_GCP_PROJECT_ID \
+    --project=robo-reliance-ops \
     --data-file=-
   ```
   `DATABASE_URL` is auto-populated by Terraform into Secret Manager.
 
-- [ ] **C2. Bootstrap PostgreSQL schema**
-  From repo root (requires Cloud SQL Auth / authorized network or Cloud SQL Proxy):
+- [x] **C2. Bootstrap PostgreSQL schema**
+  Temporarily enable public IP, use Cloud SQL Auth Proxy + psql:
   ```bash
-  gcloud sql connect inner-loop-pg-dev \
-    --project=YOUR_GCP_PROJECT_ID \
-    --user=engine_admin \
-    --database=roboreliance < init-scripts/01_init_schema.sql
-
-  gcloud sql connect inner-loop-pg-dev \
-    --project=YOUR_GCP_PROJECT_ID \
-    --user=engine_admin \
-    --database=roboreliance < init-scripts/02_platform_configs.sql
+  gcloud sql instances patch inner-loop-pg-dev --project=robo-reliance-ops --assign-ip --quiet
+  /opt/homebrew/share/google-cloud-sdk/bin/cloud-sql-proxy \
+    "robo-reliance-ops:us-central1:inner-loop-pg-dev" --port=5433 &
+  PGPASSWORD=... psql -h 127.0.0.1 -p 5433 -U engine_admin -d roboreliance \
+    -f init-scripts/01_init_schema.sql
+  psql ... -f init-scripts/02_platform_configs.sql
+  psql ... -f init-scripts/03_chat_bindings.sql
+  gcloud sql instances patch inner-loop-pg-dev --project=robo-reliance-ops --no-assign-ip --quiet
   ```
   Or use the exact commands from:
   ```bash
   terraform output -raw schema_bootstrap_command
   ```
 
-- [ ] **C3. Verify schema**
-  - Tables exist: `visits`, `labor_logs`, `financial_ledgers`, `immutable_audit_trail`, `finance_approval_tokens`, `platform_configs`
+- [x] **C3. Verify schema**
+  - Tables exist: `visits`, `labor_logs`, `financial_ledgers`, `immutable_audit_trail`, `finance_approval_tokens`, `platform_configs`, `channel_ingestion_cursors`, `space_visit_bindings`, `slack_channel_visit_bindings`, `web_chat_sessions`
   - Seed rows in `platform_configs` (finance, quickbooks, linkedin)
 
 ---
 
 ## Phase D — Build & deploy containers
 
-- [ ] **D1. Configure Docker for Artifact Registry**
+- [x] **D1. Configure Docker for Artifact Registry**
   ```bash
   gcloud auth configure-docker us-central1-docker.pkg.dev
   ```
 
-- [ ] **D2. Build and push via Cloud Build (recommended)**
+- [x] **D2. Build for linux/amd64 and push**
+  Build with `--platform linux/amd64` (required when building on Apple Silicon):
   ```bash
-  gcloud builds submit --config deployment/cloudbuild/build-images.yaml .
+  docker build --platform linux/amd64 -t us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/orchestrator:latest -f orchestrator/Dockerfile orchestrator/
+  docker build --platform linux/amd64 -t us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/mcp-quickbooks:latest -f mcp-servers/quickbooks/Dockerfile mcp-servers/quickbooks/
+  docker build --platform linux/amd64 -t us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/mcp-linkedin:latest -f mcp-servers/linkedin/Dockerfile mcp-servers/linkedin/
+  docker build --platform linux/amd64 -t us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/ops-web:latest -f web/Dockerfile web/
+  docker push us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/orchestrator:latest
+  docker push us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/mcp-quickbooks:latest
+  docker push us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/mcp-linkedin:latest
+  docker push us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/ops-web:latest
   ```
 
-- [ ] **D3. Or build locally and push**
+- [x] **D3. Deploy to Cloud Run**
   ```bash
-  terraform output -raw image_build_commands
-  ```
-  Run the printed `docker build` / `docker push` commands.
-
-- [ ] **D4. Update Cloud Run with real images (if Terraform used placeholder)**
-  After first push, either:
-  - Re-apply Terraform with image URIs in `terraform.tfvars`:
-    ```hcl
-    orchestrator_image   = "us-central1-docker.pkg.dev/PROJECT/inner-loop-images/orchestrator:latest"
-    mcp_quickbooks_image = "us-central1-docker.pkg.dev/PROJECT/inner-loop-images/mcp-quickbooks:latest"
-    mcp_linkedin_image   = "us-central1-docker.pkg.dev/PROJECT/inner-loop-images/mcp-linkedin:latest"
-    ```
-  - Or rely on Cloud Build deploy steps in `build-images.yaml`.
-
-- [ ] **D5. (Alternative) agents-cli deploy**
-  After infra exists:
-  ```bash
-  agents-cli deploy --project YOUR_GCP_PROJECT_ID --region us-central1
+  gcloud run deploy inner-loop-mcp-qbo --image=us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/mcp-quickbooks:latest --region=us-central1 --project=robo-reliance-ops --quiet
+  gcloud run deploy inner-loop-mcp-linkedin --image=us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/mcp-linkedin:latest --region=us-central1 --project=robo-reliance-ops --quiet
+  gcloud run deploy inner-loop-orchestrator --image=us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/orchestrator:latest --region=us-central1 --project=robo-reliance-ops --quiet
+  gcloud run deploy inner-loop-ops-web --image=us-central1-docker.pkg.dev/robo-reliance-ops/inner-loop-images/ops-web:latest --region=us-central1 --project=robo-reliance-ops --quiet
   ```
 
 ---
 
 ## Phase E — Verify end-to-end
 
-- [ ] **E1. Health checks**
+- [x] **E1. Health checks**
   ```bash
-  ORCH_URL=$(terraform output -raw orchestrator_url)
-  curl -s "$ORCH_URL/health" | jq .
-  curl -s "$ORCH_URL/agent/metadata" | jq .
+  TOKEN=$(gcloud auth print-identity-token)
+  curl -s -H "Authorization: Bearer $TOKEN" "https://inner-loop-orchestrator-611591209386.us-central1.run.app/health" | jq .
   ```
+  **Verified responses:**
+  - Orchestrator: `{"service":"inner_loop_orchestrator","environment":"dev","database":"connected","agent":"field_tech_support_agent"}`
+  - MCP QuickBooks: `{"service":"mcp_quickbooks","status":"ready"}`
+  - MCP LinkedIn: `{"service":"mcp_linkedin","status":"ready"}`
+  - Ops Web App: HTTP 200
 
 - [ ] **E2. Slack intake webhook**
   ```bash
-  curl -s -X POST "$ORCH_URL/webhooks/slack" \
+  TOKEN=$(gcloud auth print-identity-token)
+  curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+    "https://inner-loop-orchestrator-611591209386.us-central1.run.app/webhooks/slack" \
     -H 'Content-Type: application/json' \
     -d '{
       "slack_channel_id": "C01234567",
@@ -166,7 +168,9 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
 
 - [ ] **E3. Finance approval (HITL)**
   ```bash
-  curl -s -X POST "$ORCH_URL/webhooks/finance" \
+  TOKEN=$(gcloud auth print-identity-token)
+  curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+    "https://inner-loop-orchestrator-611591209386.us-central1.run.app/webhooks/finance" \
     -H 'Content-Type: application/json' \
     -d '{
       "approval_token": "PASTE_TOKEN_HERE",
@@ -191,17 +195,17 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
 ## Phase F — Production hardening (later)
 
 - [ ] **F1. Restrict public orchestrator ingress**
-  - Set `allow_public_orchestrator = false` in `terraform.tfvars`
+  - Set `allow_public_orchestrator = false` in `terraform.tfvars` (already done — org policy blocks allUsers)
   - Put webhooks behind verified secrets, IAP, or API Gateway
 
 - [ ] **F2. Wire external webhooks**
-  - Slack Events API → `https://<orchestrator-url>/webhooks/slack`
-  - Google Chat → `https://<orchestrator-url>/webhooks/google-chat`
-  - Finance automation → `https://<orchestrator-url>/webhooks/finance`
+  - Slack Events API → `https://inner-loop-orchestrator-611591209386.us-central1.run.app/webhooks/slack`
+  - Google Chat → `https://inner-loop-orchestrator-611591209386.us-central1.run.app/webhooks/google-chat`
+  - Finance automation → `https://inner-loop-orchestrator-611591209386.us-central1.run.app/webhooks/finance`
 
 - [ ] **F3. CI/CD trigger**
   - Cloud Build trigger on push to `main` using `deployment/cloudbuild/build-images.yaml`
-  - CI/CD SA: `inner-loop-cicd@PROJECT.iam.gserviceaccount.com`
+  - CI/CD SA: `inner-loop-cicd@robo-reliance-ops.iam.gserviceaccount.com`
 
 - [ ] **F4. Monitoring**
   - Cloud Run metrics + log-based alerts on `/health` failures
@@ -217,11 +221,23 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
 
 | Item | Local (Docker Compose) | GCP (Cloud Run) |
 |------|------------------------|-----------------|
-| Orchestrator | `http://localhost:8080` | `terraform output orchestrator_url` |
-| API docs (Swagger) | `http://localhost:8080/docs` | `<orchestrator-url>/docs` |
-| Postgres | `localhost:5432` | Cloud SQL (private) |
-| MCP QuickBooks | `http://localhost:9001` | IAM-only Cloud Run service |
-| MCP LinkedIn | `http://localhost:9002` | IAM-only Cloud Run service |
+| Orchestrator | `http://localhost:8080` | `https://inner-loop-orchestrator-611591209386.us-central1.run.app` |
+| API docs (Swagger) | `http://localhost:8080/docs` | Use `gcloud run services proxy inner-loop-orchestrator --region us-central1` then `http://localhost:8080/docs` |
+| Postgres | `localhost:5432` | Cloud SQL `inner-loop-pg-dev` (private IP, use proxy) |
+| MCP QuickBooks | `http://localhost:9001` | `https://inner-loop-mcp-qbo-611591209386.us-central1.run.app` |
+| MCP LinkedIn | `http://localhost:9002` | `https://inner-loop-mcp-linkedin-611591209386.us-central1.run.app` |
+| Ops Web App | `http://localhost:5173` | `https://inner-loop-ops-web-611591209386.us-central1.run.app` |
+
+**Authenticated access:**
+```bash
+TOKEN=$(gcloud auth print-identity-token)
+curl -H "Authorization: Bearer $TOKEN" https://inner-loop-orchestrator-611591209386.us-central1.run.app/health
+```
+
+**Local proxy (opens service on localhost without auth):**
+```bash
+gcloud run services proxy inner-loop-orchestrator --region us-central1 --project robo-reliance-ops
+```
 
 ---
 
@@ -231,7 +247,7 @@ See [docs/UI_STRATEGY.md](../docs/UI_STRATEGY.md) for the full four-surface mode
 
 | Surface | URL | Purpose |
 |---------|-----|---------|
-| **Ops Web App** | `http://localhost:5173` (dev) / `terraform output ops_web_url` | Service requests, timekeeping, finance table, embedded Web Chat |
+| **Ops Web App** | `gcloud run services proxy inner-loop-ops-web` (dev) | Service requests, timekeeping, finance table, embedded Web Chat |
 | **New Service Request** | `POST /api/v1/visits` | Primary intake — web form or Slack API call |
 | **Web Chat API** | `POST /api/v1/web-chat/message` | NL queries/commands in web app (not channel listening) |
 | **Google Chat agent** | `POST /webhooks/google-chat` | Internal visit spaces — RAG, ingest, NL timekeeping |

@@ -12,7 +12,7 @@ resource "google_compute_subnetwork" "subnet" {
 }
 
 resource "google_compute_global_address" "private_ip_range" {
-  name          = "${local.name_prefix}-psa-range"
+  name          = "${var.name_prefix}-psa-range"
   purpose       = "VPC_PEERING"
   address_type  = "INTERNAL"
   prefix_length = 16

@@ -16,10 +16,6 @@ resource "google_cloud_run_v2_service" "mcp_quickbooks" {
       ports {
         container_port = 8080
       }
-      env {
-        name  = "PORT"
-        value = "8080"
-      }
       resources {
         limits = {
           cpu    = "1"
@@ -65,10 +61,6 @@ resource "google_cloud_run_v2_service" "mcp_linkedin" {
       image = var.mcp_linkedin_image
       ports {
         container_port = 8080
-      }
-      env {
-        name  = "PORT"
-        value = "8080"
       }
       resources {
         limits = {

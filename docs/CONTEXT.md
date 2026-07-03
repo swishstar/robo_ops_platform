@@ -83,10 +83,18 @@ AI interprets; **deterministic Python tools validate and execute**. The LLM neve
 
 ## Dev environment
 
+**Fully local** (Docker Compose — no GCP charges):
 ```bash
+cp .env.example .env          # first time — add Gemini API key
 docker compose up -d          # Postgres + orchestrator + MCP stubs
 cd web && npm run dev          # React dev server at :5173
 # Orchestrator at :8080, Swagger at :8080/docs
+```
+
+**GCP proxy mode** (connects to live Cloud Run services):
+```bash
+./deployment/scripts/dev-gcp-proxy.sh
+# Web app at :5173, orchestrator proxy at :8080
 ```
 
 ## Deep-dive docs
