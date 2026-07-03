@@ -26,4 +26,5 @@ postgres_data/
 terraform.tfvars
 *.tfvars
 !*.tfvars.example
+tfplan
 
