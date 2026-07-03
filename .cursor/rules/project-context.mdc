@@ -1,0 +1,20 @@
+---
+description: Project context for AI-assisted development — read docs/CONTEXT.md before making changes
+alwaysApply: true
+---
+
+# Project Context
+
+Before working on this codebase, read `docs/CONTEXT.md` for a compact overview of the architecture, tech stack, directory layout, database tables, API routes, and workflow states.
+
+Key files for deeper context:
+- `docs/system_spec.md` — full system architecture and schema DDL
+- `docs/UI_STRATEGY.md` — four-surface UI model and API contract
+
+## Critical rules
+
+- **Deterministic backend**: The LLM/agent never writes directly to the database. All mutations go through validated Python tool functions in `orchestrator/agent_def.py`.
+- **Python 3.9 compat**: Use `Optional[T]` not `T | None` in type hints. Import from `typing`.
+- **Webhook paths**: `/webhooks/slack`, `/webhooks/google-chat`, `/webhooks/finance` — no other patterns.
+- **API prefix**: All web app routes use `/api/v1/` prefix (defined in `orchestrator/api_v1.py`).
+- **Auth**: Production uses IAP JWT. Development uses `X-User-Email` / `X-User-Role` headers. See `orchestrator/auth.py`.

@@ -1,5 +1,5 @@
 -- Robo Reliance Inner Loop Platform — relational schema bootstrap
--- Source: system_spec.md §3 Relational Schema Blueprint
+-- Source: docs/system_spec.md §3 Relational Schema Blueprint
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 

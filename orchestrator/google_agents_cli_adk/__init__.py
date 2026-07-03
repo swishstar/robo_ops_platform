@@ -1,5 +1,5 @@
 """
-Compatibility exports for system_spec.md ADK import path:
+Compatibility exports for docs/system_spec.md ADK import path:
 
     from google_agents_cli_adk import Agent, Gemini, Tool
 
@@ -25,7 +25,7 @@ class Gemini:
 
 def Tool(func: F) -> F:
     """
-    Explicit @Tool decoration from system_spec.md.
+    Explicit @Tool decoration from docs/system_spec.md.
     ADK auto-wraps plain callables; this decorator preserves spec semantics.
     """
 

@@ -227,7 +227,7 @@ Track infrastructure provisioning, secrets, schema bootstrap, and Cloud Run depl
 
 ## UI status
 
-See [docs/UI_STRATEGY.md](../docs/UI_STRATEGY.md) for the full three-surface model.
+See [docs/UI_STRATEGY.md](../docs/UI_STRATEGY.md) for the full four-surface model.
 
 | Surface | URL | Purpose |
 |---------|-----|---------|
