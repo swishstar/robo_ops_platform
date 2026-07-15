@@ -174,6 +174,18 @@ resource "google_cloud_run_v2_service" "orchestrator" {
         name  = "CORS_ORIGINS"
         value = "*"
       }
+      env {
+        name  = "FINANCE_MANAGER_EMAILS"
+        value = var.finance_manager_emails
+      }
+      env {
+        name  = "ADMIN_EMAILS"
+        value = var.admin_emails
+      }
+      env {
+        name  = "IAP_AUDIENCE"
+        value = var.iap_audience
+      }
 
       startup_probe {
         http_get {
@@ -285,4 +297,40 @@ resource "google_cloud_run_v2_service_iam_member" "public_ops_web" {
   name     = google_cloud_run_v2_service.ops_web.name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "domain_invoke_orchestrator" {
+  count    = var.authorized_domain != "" ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.orchestrator.name
+  role     = "roles/run.invoker"
+  member   = "domain:${var.authorized_domain}"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "domain_invoke_web" {
+  count    = var.authorized_domain != "" ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.ops_web.name
+  role     = "roles/run.invoker"
+  member   = "domain:${var.authorized_domain}"
+}
+
+resource "google_cloud_run_v2_service_iam_member" "member_invoke_orchestrator" {
+  for_each = toset(var.authorized_invoker_members)
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.orchestrator.name
+  role     = "roles/run.invoker"
+  member   = each.value
+}
+
+resource "google_cloud_run_v2_service_iam_member" "member_invoke_web" {
+  for_each = toset(var.authorized_invoker_members)
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.ops_web.name
+  role     = "roles/run.invoker"
+  member   = each.value
 }

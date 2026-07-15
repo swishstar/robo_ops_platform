@@ -90,3 +90,33 @@ variable "allow_public_web_app" {
   type        = bool
   default     = true
 }
+
+variable "authorized_domain" {
+  description = "Workspace domain granted Cloud Run invoker access (e.g. roboreliance.com). Empty skips domain binding."
+  type        = string
+  default     = ""
+}
+
+variable "authorized_invoker_members" {
+  description = "Additional IAM members with roles/run.invoker on orchestrator + ops web (e.g. group:ops@example.com, user:you@example.com)"
+  type        = list(string)
+  default     = []
+}
+
+variable "finance_manager_emails" {
+  description = "Comma-separated emails granted finance_manager application role"
+  type        = string
+  default     = "finance@roboreliance.internal"
+}
+
+variable "admin_emails" {
+  description = "Comma-separated emails granted admin application role"
+  type        = string
+  default     = ""
+}
+
+variable "iap_audience" {
+  description = "Expected IAP JWT audience claim (set after enabling IAP). Empty disables audience verification until IAP is live."
+  type        = string
+  default     = ""
+}

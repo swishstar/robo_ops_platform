@@ -8,3 +8,19 @@ environment = "dev"
 # mcp_linkedin_image     = "us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/inner-loop-images/mcp-linkedin:latest"
 
 allow_public_orchestrator = true
+allow_public_web_app      = true
+
+# Phase F — Roles & IAM
+# Grant Cloud Run invoker to a Workspace domain and/or explicit members:
+# authorized_domain = "yourcompany.com"
+# authorized_invoker_members = [
+#   "user:you@yourcompany.com",
+#   "group:inner-loop-users@yourcompany.com",
+# ]
+
+# Application role maps (resolved in orchestrator/auth.py — not spoofable via headers in non-dev):
+# finance_manager_emails = "finance@yourcompany.com,cfo@yourcompany.com"
+# admin_emails           = "ops-admin@yourcompany.com"
+
+# Set after enabling IAP (Phase G1b):
+# iap_audience = "/projects/PROJECT_NUMBER/global/backendServices/BACKEND_SERVICE_ID"
