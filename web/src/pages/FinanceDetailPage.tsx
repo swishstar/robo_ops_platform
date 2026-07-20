@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import { TimesheetSummary } from "../components/TimesheetSummary";
 import { WebChat } from "../components/WebChat";
 
 function formatCents(cents: number) {
@@ -54,6 +55,8 @@ export function FinanceDetailPage() {
         <dt>Findings</dt>
         <dd>{data.extracted_findings}</dd>
       </dl>
+
+      <TimesheetSummary metadata={data.timesheet_metadata} />
 
       {pending && data.approval_token && (
         <div className="panel actions">

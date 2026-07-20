@@ -43,11 +43,53 @@ class ClockInRequest(BaseModel):
     technician_identity: Optional[str] = None
 
 
+CompletionStatus = Literal[
+    "yes_fully_completed",
+    "no_still_pending",
+    "na_diagnosis_only",
+]
+
+FollowUpStatus = Literal[
+    "no_complete",
+    "yes_return_visit",
+    "yes_remote_followup",
+]
+
+WorkCategory = Literal[
+    "installation_setup",
+    "troubleshooting_diagnosis",
+    "repair_maintenance",
+    "consultation_training",
+    "preventative_check",
+    "software_update_configuration",
+]
+
+
+class MediaFileRef(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    size_bytes: int = Field(..., ge=0, le=1_073_741_824)
+
+
+class TimesheetMetadata(BaseModel):
+    service_date: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    customer_site_name: Optional[str] = Field(default=None, max_length=255)
+    work_order_number: Optional[str] = Field(default=None, max_length=120)
+    invoice_number: Optional[str] = Field(default=None, max_length=120)
+    completion_status: Optional[CompletionStatus] = None
+    follow_up_status: Optional[FollowUpStatus] = None
+    difficulty_rating: Optional[int] = Field(default=None, ge=1, le=5)
+    work_categories: list[WorkCategory] = Field(default_factory=list, max_length=6)
+    tools_equipment: Optional[str] = Field(default=None, max_length=2000)
+    media_files: list[MediaFileRef] = Field(default_factory=list, max_length=10)
+    attestation: bool = False
+
+
 class SignoffRequest(BaseModel):
     clock_in: datetime
     clock_out: datetime
     findings: str = Field(..., min_length=8)
     technician_identity: Optional[str] = None
+    timesheet: Optional[TimesheetMetadata] = None
 
 
 class FinanceActionRequest(BaseModel):
@@ -144,12 +186,46 @@ async def api_signoff(
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
     identity = body.technician_identity or user.email
+    if body.timesheet:
+        ts = body.timesheet
+        if not ts.attestation:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Timesheet attestation is required before sign-off.",
+            )
+        if not ts.service_date:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Date of site visit is required.",
+            )
+        if not ts.completion_status:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Work completion status is required.",
+            )
+        if not ts.follow_up_status:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Follow-up status is required.",
+            )
+        if ts.difficulty_rating is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Difficulty rating is required.",
+            )
+        if not ts.work_categories:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Select at least one work category.",
+            )
+    timesheet_payload = body.timesheet.model_dump(exclude_none=True) if body.timesheet else None
     result = process_visit_signoff(
         visit_id=visit_id,
         clock_in_str=body.clock_in.isoformat(),
         clock_out_str=body.clock_out.isoformat(),
         text_findings=body.findings,
         technician_identity=identity,
+        timesheet_metadata=timesheet_payload,
     )
     if result.get("status") != "success":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=result.get("message"))

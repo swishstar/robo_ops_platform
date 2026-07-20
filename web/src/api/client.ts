@@ -1,3 +1,5 @@
+import type { TimesheetMetadata } from "../constants/timesheet";
+
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
 export type UserRole = "technician" | "finance_manager" | "admin";
@@ -60,8 +62,15 @@ export const api = {
   clockIn: (id: string) =>
     request(`/api/v1/visits/${id}/clock-in`, { method: "POST", body: "{}" }),
 
-  signoff: (id: string, body: { clock_in: string; clock_out: string; findings: string }) =>
-    request(`/api/v1/visits/${id}/signoff`, { method: "POST", body: JSON.stringify(body) }),
+  signoff: (
+    id: string,
+    body: {
+      clock_in: string;
+      clock_out: string;
+      findings: string;
+      timesheet?: TimesheetMetadata;
+    },
+  ) => request(`/api/v1/visits/${id}/signoff`, { method: "POST", body: JSON.stringify(body) }),
 
   financeLedgers: (params?: { approval_state?: string }) => {
     const q = params?.approval_state
@@ -107,6 +116,7 @@ export interface LaborLog {
   clock_in: string | null;
   clock_out: string | null;
   extracted_findings: string | null;
+  timesheet_metadata?: TimesheetMetadata | null;
   is_verified: boolean;
 }
 
@@ -141,6 +151,7 @@ export interface FinanceLedgerDetail extends FinanceLedger {
   metadata_poc: { name: string; phone: string; email: string };
   clock_in?: string;
   clock_out?: string;
+  timesheet_metadata?: TimesheetMetadata | null;
   approval_token?: string;
   audit_trail?: Array<{ execution_context: string; timestamp: string }>;
 }
