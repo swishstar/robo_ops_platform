@@ -7,8 +7,8 @@ environment = "dev"
 # mcp_quickbooks_image   = "us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/inner-loop-images/mcp-quickbooks:latest"
 # mcp_linkedin_image     = "us-central1-docker.pkg.dev/YOUR_GCP_PROJECT_ID/inner-loop-images/mcp-linkedin:latest"
 
-allow_public_orchestrator = true
-allow_public_web_app      = true
+allow_public_orchestrator = false
+allow_public_web_app      = false
 
 # Phase F — Roles & IAM
 # Grant Cloud Run invoker to a Workspace domain and/or explicit members:
@@ -22,5 +22,13 @@ allow_public_web_app      = true
 # finance_manager_emails = "finance@yourcompany.com,cfo@yourcompany.com"
 # admin_emails           = "ops-admin@yourcompany.com"
 
-# Set after enabling IAP (Phase G1b):
-# iap_audience = "/projects/PROJECT_NUMBER/global/backendServices/BACKEND_SERVICE_ID"
+# Phase G1b — IAP on Ops Web (Google-managed OAuth for Workspace users; no custom OAuth client required)
+enable_iap_ops_web = true
+# Optional override; empty uses computed Cloud Run IAP audience:
+# iap_audience = "/projects/PROJECT_NUMBER/locations/us-central1/services/inner-loop-ops-web"
+
+# Phase G2 — webhooks
+# Org policy often blocks allUsers and chat@system.gserviceaccount.com as invokers.
+# Use invoker IAM disabled + app-level Slack HMAC / Google Chat JWT verification:
+orchestrator_invoker_iam_disabled = true
+grant_google_chat_invoker         = false

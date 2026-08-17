@@ -24,7 +24,8 @@ logger = logging.getLogger(__name__)
 
 SOP_INDEX_ENDPOINT = os.getenv(
     "SOP_SEARCH_ENDPOINT",
-    "https://discoveryengine.googleapis.com/v1/projects/roboreliance/locations/global/collections/default_collection/engines/sop-library/servingConfigs/default_search",
+    "https://discoveryengine.googleapis.com/v1/projects/robo-reliance-ops/locations/global/"
+    "collections/default_collection/engines/sop-library-search/servingConfigs/default_search",
 )
 
 
@@ -38,8 +39,7 @@ def lookup_technical_sop(query: str) -> str:
     if not normalized_query:
         return "Error: SOP query must not be empty."
 
-    # Local development returns deterministic grounding stubs; production routes
-    # through Vertex AI Search / Platform Search Extension.
+    # Local development returns deterministic grounding stubs; non-dev calls Vertex AI Search.
     if os.getenv("ENVIRONMENT", "development") == "development":
         return (
             "SOP Context (local stub):\n"
@@ -50,17 +50,23 @@ def lookup_technical_sop(query: str) -> str:
             "- Citation: drive://03_Technical_Library/RR-FieldOps/Maintenance_Checklist.pdf#p12"
         )
 
-    return (
-        "SOP Context (production index binding):\n"
-        f"- Query: {normalized_query}\n"
-        f"- Index endpoint: {SOP_INDEX_ENDPOINT}\n"
-        "- Action: Delegate vector retrieval to Platform Search Extension at runtime."
-    )
+    try:
+        from vertex_search import search_vertex_ai
+
+        return search_vertex_ai(normalized_query, SOP_INDEX_ENDPOINT)
+    except Exception as exc:
+        logger.exception("lookup_technical_sop Vertex AI Search failed")
+        return (
+            "SOP Context (search unavailable):\n"
+            f"- Query: {normalized_query}\n"
+            f"- Error: {exc}\n"
+            f"- Index: {SOP_INDEX_ENDPOINT}"
+        )
 
 
 FIELD_LEARNINGS_INDEX_ENDPOINT = os.getenv(
     "FIELD_LEARNINGS_SEARCH_ENDPOINT",
-    "https://discoveryengine.googleapis.com/v1/projects/roboreliance/locations/global/"
+    "https://discoveryengine.googleapis.com/v1/projects/robo-reliance-ops/locations/global/"
     "collections/default_collection/engines/field-learnings/servingConfigs/default_search",
 )
 
@@ -100,12 +106,18 @@ def lookup_field_learnings(query: str) -> str:
             "- No matching field notes indexed yet for this environment."
         )
 
-    return (
-        "Field Learnings Context (production index binding):\n"
-        f"- Query: {normalized_query}\n"
-        f"- Index endpoint: {FIELD_LEARNINGS_INDEX_ENDPOINT}\n"
-        "- Action: Delegate vector retrieval to field_learnings Discovery Engine at runtime."
-    )
+    try:
+        from vertex_search import search_vertex_ai
+
+        return search_vertex_ai(normalized_query, FIELD_LEARNINGS_INDEX_ENDPOINT)
+    except Exception as exc:
+        logger.exception("lookup_field_learnings Vertex AI Search failed")
+        return (
+            "Field Learnings Context (search unavailable):\n"
+            f"- Query: {normalized_query}\n"
+            f"- Error: {exc}\n"
+            f"- Index: {FIELD_LEARNINGS_INDEX_ENDPOINT}"
+        )
 
 
 @Tool

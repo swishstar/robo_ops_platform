@@ -3,17 +3,21 @@ Slack Events API handler — parallel to Google Chat for external/client channel
 
 Exposed at POST /webhooks/slack. Visit creation is handled by the web app
 (POST /api/v1/visits); Slack can call that API to create visits programmatically.
+
+Events API does not display the HTTP response body in-channel. After the agent
+turn, replies are posted via chat.postMessage (see slack_client.py).
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 from agent_runner import ChannelContext, handle_agent_turn
 from database import get_visit_by_slack_channel_id
 from field_learnings_ingest import ingest_chat_message
+from slack_client import post_channel_message
 
 logger = logging.getLogger(__name__)
 
@@ -26,10 +30,16 @@ def _slack_user_email(event: dict[str, Any]) -> str:
     return event.get("user_email") or f"slack:{event.get('user', 'unknown')}@roboreliance.internal"
 
 
-def handle_slack_event(payload: dict[str, Any]) -> dict[str, Any]:
-    if payload.get("type") == "url_verification":
-        return {"challenge": payload.get("challenge", "")}
+def handle_slack_url_verification(payload: dict[str, Any]) -> dict[str, Any]:
+    return {"challenge": payload.get("challenge", "")}
 
+
+def process_slack_event(payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Ingest a Slack event_callback, run the agent, and post the reply to the channel.
+
+    Safe to run from a FastAPI BackgroundTask after acknowledging Slack with 200.
+    """
     if payload.get("type") != "event_callback":
         return {}
 
@@ -72,10 +82,51 @@ def handle_slack_event(payload: dict[str, Any]) -> dict[str, Any]:
         user_identity=user_email,
     )
     turn = handle_agent_turn(text, context)
+    reply_text = (turn.reply_text or "").strip()
+    if not reply_text:
+        logger.info(
+            "Slack agent returned empty reply (channel=%s visit=%s); skipping postMessage",
+            channel_id,
+            visit_id,
+        )
+        return {"visit_id": visit_id, "posted": False}
+
+    # Reply in-thread when the user messaged in a thread; otherwise top-level.
+    # For bare @mentions, thread under the mention so the channel stays quieter.
+    reply_thread_ts: Optional[str] = thread_ts or message_ts
+
+    try:
+        post_channel_message(
+            channel_id,
+            reply_text,
+            thread_ts=reply_thread_ts,
+        )
+        logger.info(
+            "Posted Slack reply (channel=%s visit=%s thread=%s)",
+            channel_id,
+            visit_id,
+            reply_thread_ts,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to post Slack reply (channel=%s visit=%s)",
+            channel_id,
+            visit_id,
+        )
+        raise
 
     return {
-        "response_type": "in_channel",
-        "text": turn.reply_text,
         "visit_id": visit_id,
+        "posted": True,
         "citations": turn.citations,
     }
+
+
+def handle_slack_event(payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Synchronous entrypoint (tests / local). Prefer process_slack_event from the
+    webhook after URL verification is handled separately.
+    """
+    if payload.get("type") == "url_verification":
+        return handle_slack_url_verification(payload)
+    return process_slack_event(payload)

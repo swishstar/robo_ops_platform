@@ -37,6 +37,12 @@ resource "google_project_iam_member" "orchestrator_log_writer" {
   member  = "serviceAccount:${google_service_account.orchestrator.email}"
 }
 
+resource "google_project_iam_member" "orchestrator_discoveryengine_user" {
+  project = var.project_id
+  role    = "roles/discoveryengine.user"
+  member  = "serviceAccount:${google_service_account.orchestrator.email}"
+}
+
 resource "google_project_iam_member" "mcp_log_writer" {
   project = var.project_id
   role    = "roles/logging.logWriter"

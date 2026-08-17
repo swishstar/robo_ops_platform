@@ -220,21 +220,11 @@ The platform has two IAM layers: **GCP IAM** (who can reach each Cloud Run servi
 
 ### F3. Webhook caller identity
 
-- [ ] **F3a. Slack webhook verification**
-  Validate the `X-Slack-Signature` header on every `/webhooks/slack` request:
-  1. Add `SLACK_SIGNING_SECRET` to Secret Manager
-  2. Add it as a secret env var on the orchestrator Cloud Run service
-  3. Implement HMAC-SHA256 signature verification in the webhook handler
-  See: [Slack — Verifying requests](https://api.slack.com/authentication/verifying-requests-from-slack)
-  *Blocked on Slack app creation (Phase G2a).*
+- [x] **F3a. Slack webhook verification**
+  Implemented in `orchestrator/webhook_security.py` (HMAC-SHA256). Secret Manager secret + Cloud Run env wired by Terraform. Populate the real signing secret in G2a.
 
-- [ ] **F3b. Google Chat JWT verification**
-  Verify the `Authorization: Bearer` JWT on `/webhooks/google-chat`:
-  - Validate `iss = "chat@system.gserviceaccount.com"`
-  - Validate `aud = PROJECT_NUMBER` (611591209386)
-  - Verify signature against Google's public keys
-  See: [Google Chat — Authenticate](https://developers.google.com/workspace/chat/authenticate-authorize)
-  *Blocked on Google Chat app registration (Phase G2b).*
+- [x] **F3b. Google Chat JWT verification**
+  Implemented in `orchestrator/webhook_security.py` (OIDC HTTP-audience or project-number JWT). Chat SA invoker + audience env vars wired by Terraform. Complete app registration in G2b.
 
 - [x] **F3c. Finance webhook — require identity token**
   Already enforced by Cloud Run IAM (no public invoker). Callers must present a GCP identity token. Approval tokens remain single-use / TTL-limited.
@@ -267,52 +257,35 @@ The platform has two IAM layers: **GCP IAM** (who can reach each Cloud Run servi
 
 ### G1. Ingress & authentication
 
-- [ ] **G1a. Confirm orchestrator ingress is restricted**
-  Already enforced — org policy `iam.allowedPolicyMemberDomains` blocks `allUsers`.
-  `allow_public_orchestrator = false` in `terraform.tfvars`.
+- [x] **G1a. Confirm orchestrator ingress is restricted**
+  Org policy still blocks `allUsers` / external SAs as invokers. For Slack/Chat reachability under that policy, `orchestrator_invoker_iam_disabled = true` (app verifies Slack HMAC + Chat JWT). `/api/v1` still accepts `X-User-Email` when Cloud Run IAM is bypassed — treat as interim; follow-up is path-split LB or IAP-only API via BFF.
 
-- [ ] **G1b. Set up Identity-Aware Proxy (IAP) for the Ops Web App**
-  Provides domain-scoped Google login for browser access (no proxy needed):
-  ```bash
-  # Enable IAP API
-  gcloud services enable iap.googleapis.com --project=robo-reliance-ops
+- [x] **G1b. Set up Identity-Aware Proxy (IAP) for the Ops Web App**
+  Terraform-managed (see [deployment/docs/IAP_SETUP.md](docs/IAP_SETUP.md)):
+  - `iap.googleapis.com` enabled
+  - `enable_iap_ops_web = true` → `iap_enabled` on `inner-loop-ops-web`
+  - IAP service agent granted `roles/run.invoker`
+  - Domain / member `roles/iap.httpsResourceAccessor`
+  - Computed `IAP_AUDIENCE` wired into orchestrator env
+  - Google-managed OAuth for Workspace users (no custom OAuth client needed for in-org access)
+  - **Note:** SPA → orchestrator API still gated by Cloud Run IAM; use `gcloud run services proxy` for API until a same-origin BFF is added.
 
-  # Configure OAuth consent screen in Console:
-  # https://console.cloud.google.com/apis/credentials/consent?project=robo-reliance-ops
-  # - Internal app type (Workspace domain only)
-  # - App name: "Robo Reliance Ops"
-
-  # Create OAuth client credentials, then configure IAP for the Cloud Run service
-  # via Console: https://console.cloud.google.com/security/iap?project=robo-reliance-ops
-  ```
-  Alternatively, keep using `gcloud run services proxy` for dev access.
-
-- [ ] **G1c. Secure webhook endpoints with verification secrets**
-  Detailed steps in Phase F3 above — Slack signature, Google Chat JWT, finance identity token.
+- [x] **G1c. Secure webhook endpoints with verification secrets**
+  Implemented in `orchestrator/webhook_security.py` + wired in `main.py`:
+  - Slack: HMAC-SHA256 (`X-Slack-Signature` / `X-Slack-Request-Timestamp`) via `SLACK_SIGNING_SECRET`
+  - Google Chat: Bearer JWT (HTTP-endpoint OIDC or project-number mode)
+  - Terraform: Secret Manager `inner-loop-slack-signing-secret-dev`, Chat env audiences, `chat@system.gserviceaccount.com` invoker
+  - Still need real Slack signing secret from G2a before Slack Events succeed
 
 ---
 
 ### G2. Wire external webhooks
 
-- [ ] **G2a. Register Slack app**
-  1. Create a Slack app at [api.slack.com/apps](https://api.slack.com/apps)
-  2. Enable Event Subscriptions:
-     - **Request URL:** `https://inner-loop-orchestrator-611591209386.us-central1.run.app/webhooks/slack`
-     - Subscribe to: `message.channels`, `app_mention`
-  3. Add the signing secret to Secret Manager:
-     ```bash
-     echo -n 'YOUR_SLACK_SIGNING_SECRET' | gcloud secrets create inner-loop-slack-signing-secret-dev \
-       --project=robo-reliance-ops --data-file=-
-     ```
-  4. Install the app to your Slack workspace
+- [x] **G2a. Register Slack app**
+  Verified working (Events API + `chat.postMessage` replies). Signing secret and bot token in Secret Manager; bot scopes include `app_mentions:read`, `channels:history`, `chat:write`.
 
-- [ ] **G2b. Register Google Chat app**
-  Follow [deployment/docs/GOOGLE_CHAT_SETUP.md](docs/GOOGLE_CHAT_SETUP.md):
-  1. Open [Chat API Configuration](https://console.cloud.google.com/apis/api/chat.googleapis.com/hangouts-chat?project=robo-reliance-ops)
-  2. Create app "Robo Reliance Field Agent"
-  3. HTTP endpoint: `https://inner-loop-orchestrator-611591209386.us-central1.run.app/webhooks/google-chat`
-  4. Enable 1:1 messages and space conversations
-  5. Set visibility to domain-only
+- [x] **G2b. Register Google Chat app**
+  Verified working for app **Geary** in `robo-reliance-ops`. HTTP endpoint `/webhooks/google-chat` (no `/events`). Workspace Add-on event/response shapes supported in `chat_webhook.py`. JWT accepts classic Chat SA and `gcp-sa-gsuiteaddons` service agent.
 
 - [ ] **G2c. Finance webhook integration**
   For programmatic finance approval (e.g. from an approval workflow or admin tool):
@@ -323,7 +296,7 @@ The platform has two IAM layers: **GCP IAM** (who can reach each Cloud Run servi
     -H 'Content-Type: application/json' \
     -d '{"approval_token": "...", "operator_identity": "...", "action": "approve"}'
   ```
-
+  Cloud Run IAM + single-use approval tokens (F3c) remain the security model.
 ---
 
 ### G3. CI/CD pipeline
@@ -403,33 +376,19 @@ The Cloud Build config and CI/CD service account are already provisioned by Terr
 
 ### G5. RAG grounding (Vertex AI Search)
 
-The `lookup_technical_sop` tool currently returns stub data. To enable real RAG:
+The `lookup_technical_sop` tool calls Discovery Engine when `ENVIRONMENT != development`.
 
-- [ ] **G5a. Create a Vertex AI Search data store**
-  ```bash
-  # Enable Discovery Engine API
-  gcloud services enable discoveryengine.googleapis.com --project=robo-reliance-ops
+- [x] **G5a. Create a Vertex AI Search data store**
+  Created `sop-library` (unstructured / content-required) in `robo-reliance-ops`. Seed corpus in `gs://robo-reliance-ops-sop-library/`. See [deployment/docs/VERTEX_AI_SEARCH_SETUP.md](docs/VERTEX_AI_SEARCH_SETUP.md). Drive `/03_Technical_Library` can be attached in Console as a follow-up.
 
-  # Create data store in Console:
-  # https://console.cloud.google.com/gen-app-builder/data-stores?project=robo-reliance-ops
-  # - Data store type: Unstructured documents
-  # - Source: Google Drive folder /03_Technical_Library
-  # - Name: sop-library
-  ```
+- [x] **G5b. Create a search engine/app**
+  Created engine `sop-library-search` attached to `sop-library`.
 
-- [ ] **G5b. Create a search engine/app**
-  ```bash
-  # Console: https://console.cloud.google.com/gen-app-builder/engines?project=robo-reliance-ops
-  # - Engine type: Search
-  # - Attach data store: sop-library
-  # - Name: sop-library-search
-  ```
-
-- [ ] **G5c. Wire the tool to the real endpoint**
-  Update `orchestrator/agent_def.py` `lookup_technical_sop` to call the Vertex AI Search API in production, using the search engine's serving config endpoint.
+- [x] **G5c. Wire the tool to the real endpoint**
+  `orchestrator/vertex_search.py` + `lookup_technical_sop` call `:search` with ADC. Terraform sets `SOP_SEARCH_ENDPOINT` and grants `roles/discoveryengine.user` to the orchestrator SA.
 
 - [ ] **G5d. (Optional) Field learnings corpus**
-  Create a second data store for field learnings captured from completed visits. Feed `extracted_findings` from `labor_logs` into this corpus to enable cross-visit knowledge retrieval.
+  Create a second data store for field learnings captured from completed visits. Feed `extracted_findings` from `labor_logs` into this corpus to enable cross-visit knowledge retrieval. Endpoint env var already reserved: `FIELD_LEARNINGS_SEARCH_ENDPOINT`.
 
 ---
 
@@ -490,7 +449,7 @@ See [docs/UI_STRATEGY.md](../docs/UI_STRATEGY.md) for the full four-surface mode
 
 | Surface | URL | Purpose |
 |---------|-----|---------|
-| **Ops Web App** | `gcloud run services proxy inner-loop-ops-web` (dev) | Service requests, timekeeping, finance table, embedded Web Chat |
+| **Ops Web App** | `https://inner-loop-ops-web-dwsjqyi2rq-uc.a.run.app` (IAP Google login) | Service requests, timekeeping, finance table, embedded Web Chat |
 | **New Service Request** | `POST /api/v1/visits` | Primary intake — web form or Slack API call |
 | **Web Chat API** | `POST /api/v1/web-chat/message` | NL queries/commands in web app (not channel listening) |
 | **Google Chat agent** | `POST /webhooks/google-chat` | Internal visit spaces — RAG, ingest, NL timekeeping |

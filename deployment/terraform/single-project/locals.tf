@@ -1,3 +1,7 @@
+data "google_project" "current" {
+  project_id = var.project_id
+}
+
 locals {
   labels = {
     environment = var.environment
@@ -17,4 +21,11 @@ locals {
   orchestrator_sa_id  = "${var.name_prefix}-orchestrator"
   mcp_sa_id           = "${var.name_prefix}-mcp"
   cicd_sa_id          = "${var.name_prefix}-cicd"
+
+  # Cloud Run IAP audience (no load balancer): /projects/NUMBER/locations/REGION/services/NAME
+  computed_iap_audience = "/projects/${data.google_project.current.number}/locations/${var.region}/services/${local.web_app_name}"
+  effective_iap_audience = var.iap_audience != "" ? var.iap_audience : (
+    var.enable_iap_ops_web ? local.computed_iap_audience : ""
+  )
+  iap_service_agent = "serviceAccount:service-${data.google_project.current.number}@gcp-sa-iap.iam.gserviceaccount.com"
 }

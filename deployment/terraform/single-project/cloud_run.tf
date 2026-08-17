@@ -95,6 +95,8 @@ resource "google_cloud_run_v2_service" "orchestrator" {
   location = var.region
   labels   = local.labels
   ingress  = "INGRESS_TRAFFIC_ALL"
+  # Org-policy-friendly public ingress for Slack (allUsers is blocked). App verifies Slack/Chat signatures.
+  invoker_iam_disabled = var.orchestrator_invoker_iam_disabled
 
   template {
     service_account = google_service_account.orchestrator.email
@@ -167,8 +169,34 @@ resource "google_cloud_run_v2_service" "orchestrator" {
         }
       }
       env {
+        name = "SLACK_SIGNING_SECRET"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.slack_signing_secret.secret_id
+            version = "latest"
+          }
+        }
+      }
+      env {
+        name = "SLACK_BOT_TOKEN"
+        value_source {
+          secret_key_ref {
+            secret  = google_secret_manager_secret.slack_bot_token.secret_id
+            version = "latest"
+          }
+        }
+      }
+      env {
         name  = "FIELD_LEARNINGS_SEARCH_ENDPOINT"
         value = "https://discoveryengine.googleapis.com/v1/projects/${var.project_id}/locations/global/collections/default_collection/engines/field-learnings/servingConfigs/default_search"
+      }
+      env {
+        name  = "SOP_SEARCH_ENDPOINT"
+        value = "https://discoveryengine.googleapis.com/v1/projects/${var.project_id}/locations/global/collections/default_collection/engines/sop-library-search/servingConfigs/default_search"
+      }
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT"
+        value = var.project_id
       }
       env {
         name  = "CORS_ORIGINS"
@@ -184,7 +212,21 @@ resource "google_cloud_run_v2_service" "orchestrator" {
       }
       env {
         name  = "IAP_AUDIENCE"
-        value = var.iap_audience
+        value = local.effective_iap_audience
+      }
+      env {
+        name  = "GOOGLE_CLOUD_PROJECT_NUMBER"
+        value = data.google_project.current.number
+      }
+      env {
+        # Prefer Chat app Authentication audience = Project number (always verified via
+        # GOOGLE_CLOUD_PROJECT_NUMBER). HTTP-endpoint audience should use this URL form:
+        name  = "GOOGLE_CHAT_AUDIENCE"
+        value = "https://${local.orchestrator_name}-${data.google_project.current.number}.${var.region}.run.app/webhooks/google-chat"
+      }
+      env {
+        name  = "REQUIRE_WEBHOOK_VERIFICATION"
+        value = var.environment == "development" ? "false" : "true"
       }
 
       startup_probe {
@@ -248,6 +290,7 @@ resource "google_cloud_run_v2_service" "ops_web" {
   location = var.region
   labels   = local.labels
   ingress  = "INGRESS_TRAFFIC_ALL"
+  iap_enabled = var.enable_iap_ops_web
 
   template {
     scaling {
@@ -297,6 +340,45 @@ resource "google_cloud_run_v2_service_iam_member" "public_ops_web" {
   name     = google_cloud_run_v2_service.ops_web.name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# IAP service agent must be able to invoke the protected Cloud Run service.
+resource "google_cloud_run_v2_service_iam_member" "iap_invokes_ops_web" {
+  count    = var.enable_iap_ops_web ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.ops_web.name
+  role     = "roles/run.invoker"
+  member   = local.iap_service_agent
+}
+
+resource "google_iap_web_cloud_run_service_iam_member" "ops_web_domain" {
+  count                  = var.enable_iap_ops_web && var.authorized_domain != "" ? 1 : 0
+  project                = var.project_id
+  location               = var.region
+  cloud_run_service_name = google_cloud_run_v2_service.ops_web.name
+  role                   = "roles/iap.httpsResourceAccessor"
+  member                 = "domain:${var.authorized_domain}"
+}
+
+resource "google_iap_web_cloud_run_service_iam_member" "ops_web_members" {
+  for_each = var.enable_iap_ops_web ? toset(var.authorized_invoker_members) : toset([])
+
+  project                = var.project_id
+  location               = var.region
+  cloud_run_service_name = google_cloud_run_v2_service.ops_web.name
+  role                   = "roles/iap.httpsResourceAccessor"
+  member                 = each.value
+}
+
+# Google Chat posts to the orchestrator; grant Chat SA invoker (HTTP-endpoint audience mode).
+resource "google_cloud_run_v2_service_iam_member" "google_chat_invokes_orchestrator" {
+  count    = var.grant_google_chat_invoker ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.orchestrator.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:chat@system.gserviceaccount.com"
 }
 
 resource "google_cloud_run_v2_service_iam_member" "domain_invoke_orchestrator" {

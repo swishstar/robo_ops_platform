@@ -50,6 +50,31 @@ output "google_api_key_secret_id" {
   value = google_secret_manager_secret.google_api_key.secret_id
 }
 
+output "slack_signing_secret_id" {
+  value = google_secret_manager_secret.slack_signing_secret.secret_id
+}
+
+output "slack_bot_token_secret_id" {
+  value = google_secret_manager_secret.slack_bot_token.secret_id
+}
+
+output "iap_audience" {
+  description = "IAP JWT audience for the Ops Web Cloud Run service (set in orchestrator IAP_AUDIENCE)"
+  value       = local.effective_iap_audience
+}
+
+output "google_chat_webhook_url" {
+  value = "${google_cloud_run_v2_service.orchestrator.uri}/webhooks/google-chat"
+}
+
+output "slack_webhook_url" {
+  value = "${google_cloud_run_v2_service.orchestrator.uri}/webhooks/slack"
+}
+
+output "project_number" {
+  value = data.google_project.current.number
+}
+
 output "schema_bootstrap_command" {
   description = "Apply init-scripts to Cloud SQL after first terraform apply"
   value       = <<-EOT

@@ -7,13 +7,14 @@ mutation or external MCP call occurs.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
@@ -27,7 +28,8 @@ from database import (
     init_sync_pool,
 )
 from finance_service import execute_finance_approval
-from slack_events import handle_slack_event
+from slack_events import handle_slack_url_verification, process_slack_event
+from webhook_security import verify_google_chat_request, verify_slack_request
 
 logging.basicConfig(
     level=logging.INFO,
@@ -129,14 +131,35 @@ async def agent_metadata() -> dict[str, Any]:
 
 
 @app.post("/webhooks/slack")
-async def slack_webhook(payload: dict[str, Any]) -> dict[str, Any]:
-    """Slack Events API — channel agent for client/external technical discussion."""
-    return handle_slack_event(payload)
+async def slack_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+) -> dict[str, Any]:
+    """
+    Slack Events API — channel agent for client/external technical discussion.
+
+    Acknowledge quickly (Slack requires ~3s), then process + chat.postMessage
+    in a background task.
+    """
+    raw_body = await request.body()
+    verify_slack_request(request, raw_body)
+    payload = json.loads(raw_body.decode("utf-8") or "{}")
+
+    if payload.get("type") == "url_verification":
+        return handle_slack_url_verification(payload)
+
+    background_tasks.add_task(process_slack_event, payload)
+    return {"ok": True}
 
 
 @app.post("/webhooks/google-chat")
-async def google_chat_webhook(payload: dict[str, Any]) -> dict[str, Any]:
+async def google_chat_webhook(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+) -> dict[str, Any]:
     """Google Chat app — internal visit spaces and invitable agent."""
+    verify_google_chat_request(authorization)
+    payload = await request.json()
     return handle_google_chat_event(payload)
 
 

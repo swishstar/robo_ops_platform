@@ -116,7 +116,25 @@ variable "admin_emails" {
 }
 
 variable "iap_audience" {
-  description = "Expected IAP JWT audience claim (set after enabling IAP). Empty disables audience verification until IAP is live."
+  description = "Expected IAP JWT audience claim. Empty uses the computed Cloud Run IAP audience for ops-web when enable_iap_ops_web is true."
   type        = string
   default     = ""
+}
+
+variable "enable_iap_ops_web" {
+  description = "Enable Identity-Aware Proxy on the Ops Web Cloud Run service (Google-managed OAuth for Workspace users)."
+  type        = bool
+  default     = true
+}
+
+variable "orchestrator_invoker_iam_disabled" {
+  description = "Disable Cloud Run invoker IAM on the orchestrator (org-policy-friendly public ingress). Required for Slack Events when allUsers is blocked; keep app-level Slack/Chat signature verification enabled."
+  type        = bool
+  default     = false
+}
+
+variable "grant_google_chat_invoker" {
+  description = "Grant chat@system.gserviceaccount.com roles/run.invoker on the orchestrator. Often blocked by iam.allowedPolicyMemberDomains — prefer orchestrator_invoker_iam_disabled + app JWT verification."
+  type        = bool
+  default     = false
 }

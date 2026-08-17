@@ -11,6 +11,7 @@ resource "google_project_service" "required" {
     "cloudresourcemanager.googleapis.com",
     "chat.googleapis.com",
     "discoveryengine.googleapis.com",
+    "iap.googleapis.com",
   ])
 
   project            = var.project_id
