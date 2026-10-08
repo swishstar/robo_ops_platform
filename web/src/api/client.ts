@@ -1,6 +1,17 @@
 import type { TimesheetMetadata } from "../constants/timesheet";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+/** Runtime config (Cloud Run) wins; Vite build-time env is for local overrides. */
+function resolveApiBase(): string {
+  const runtime = window.__RR_OPS_CONFIG__?.apiBase;
+  if (typeof runtime === "string" && runtime.length > 0) {
+    return runtime.replace(/\/$/, "");
+  }
+  const buildTime = import.meta.env.VITE_API_BASE;
+  if (typeof buildTime === "string" && buildTime.length > 0) {
+    return buildTime.replace(/\/$/, "");
+  }
+  return "";
+}
 
 export type UserRole = "technician" | "finance_manager" | "admin";
 
@@ -22,6 +33,24 @@ export function setStoredUser(email: string, role: UserRole) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ email, role }));
 }
 
+async function parseJsonResponse<T>(res: Response): Promise<T> {
+  const text = await res.text();
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json")) {
+    const looksLikeHtml = text.trimStart().toLowerCase().startsWith("<!doctype") || text.trimStart().startsWith("<");
+    throw new Error(
+      looksLikeHtml
+        ? "API returned HTML instead of JSON. Check that VITE_API_BASE points at the orchestrator."
+        : `API returned non-JSON response (${res.status}).`,
+    );
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`API returned invalid JSON (${res.status}).`);
+  }
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const user = getStoredUser();
   const headers: Record<string, string> = {
@@ -30,12 +59,19 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     "X-User-Role": user.role,
     ...(options.headers as Record<string, string> | undefined),
   };
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${resolveApiBase()}${path}`, { ...options, headers });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail ?? res.statusText);
+    try {
+      const body = await parseJsonResponse<{ detail?: string }>(res);
+      throw new Error(body.detail ?? res.statusText);
+    } catch (err) {
+      if (err instanceof Error && err.message !== res.statusText) {
+        throw err;
+      }
+      throw new Error(res.statusText);
+    }
   }
-  return res.json() as Promise<T>;
+  return parseJsonResponse<T>(res);
 }
 
 export const api = {
