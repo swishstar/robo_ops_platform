@@ -43,6 +43,13 @@ resource "google_project_iam_member" "orchestrator_discoveryengine_user" {
   member  = "serviceAccount:${google_service_account.orchestrator.email}"
 }
 
+# Editor required for G5d field-learnings document upserts (search + write).
+resource "google_project_iam_member" "orchestrator_discoveryengine_editor" {
+  project = var.project_id
+  role    = "roles/discoveryengine.editor"
+  member  = "serviceAccount:${google_service_account.orchestrator.email}"
+}
+
 resource "google_project_iam_member" "mcp_log_writer" {
   project = var.project_id
   role    = "roles/logging.logWriter"
@@ -65,6 +72,19 @@ resource "google_project_iam_member" "cicd_sa_user" {
   project = var.project_id
   role    = "roles/iam.serviceAccountUser"
   member  = "serviceAccount:${google_service_account.cicd.email}"
+}
+
+# Required when Cloud Build runs as the custom CI/CD SA (logging + act-as).
+resource "google_project_iam_member" "cicd_log_writer" {
+  project = var.project_id
+  role    = "roles/logging.logWriter"
+  member  = "serviceAccount:${google_service_account.cicd.email}"
+}
+
+resource "google_service_account_iam_member" "cloudbuild_act_as_cicd" {
+  service_account_id = google_service_account.cicd.name
+  role               = "roles/iam.serviceAccountUser"
+  member             = "serviceAccount:${data.google_project.current.number}@cloudbuild.gserviceaccount.com"
 }
 
 resource "google_service_account_iam_member" "cicd_impersonate_orchestrator" {

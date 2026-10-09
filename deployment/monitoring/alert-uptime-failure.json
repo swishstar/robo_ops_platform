@@ -1,0 +1,33 @@
+{
+  "displayName": "Orchestrator uptime failure",
+  "documentation": {
+    "content": "Orchestrator /health uptime check failing. Check Cloud Run revisions and Monitoring invoker IAM.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "Uptime check failing",
+      "conditionThreshold": {
+        "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.labels.check_id=\"orchestrator-health-eCfhE3S0gLM\"",
+        "comparison": "COMPARISON_LT",
+        "thresholdValue": 1,
+        "duration": "300s",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_FRACTION_TRUE",
+            "crossSeriesReducer": "REDUCE_MEAN"
+          }
+        ],
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "combiner": "OR",
+  "enabled": true,
+  "notificationChannels": [
+    "projects/robo-reliance-ops/notificationChannels/14286568972661224913",
+    "projects/robo-reliance-ops/notificationChannels/10886866853074111990"
+  ],
+  "alertStrategy": { "autoClose": "1800s" }
+}

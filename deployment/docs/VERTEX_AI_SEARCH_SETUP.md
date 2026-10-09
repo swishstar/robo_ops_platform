@@ -64,6 +64,53 @@ curl -sS -X POST \
 
 Then in Google Chat: `@Geary what is error code A-17`
 
-## Field learnings (G5d — optional)
+## Field learnings (G5d)
 
-Create a second data store/engine named `field-learnings` when ready. The orchestrator already reads `FIELD_LEARNINGS_SEARCH_ENDPOINT`.
+Provisioned 2026-10-08/09:
+
+| Resource | ID |
+|---|---|
+| Data store | `field-learnings` |
+| Search engine/app | `field-learnings` |
+| Serving config | `default_search` |
+| Corpus bucket | `gs://robo-reliance-ops-field-learnings/` |
+| Serving URL | `https://discoveryengine.googleapis.com/v1/projects/robo-reliance-ops/locations/global/collections/default_collection/engines/field-learnings/servingConfigs/default_search` |
+
+Orchestrator env `FIELD_LEARNINGS_SEARCH_ENDPOINT` is already set in Terraform. Orchestrator SA needs `roles/discoveryengine.editor` for live document upserts (in addition to `roles/discoveryengine.user` for search).
+
+### Ingest paths
+
+1. **Chat channels** — Google Chat / Slack handlers call `field_learnings_ingest.ingest_chat_message` (production upserts Discovery Engine documents).
+2. **Visit sign-off** — `process_visit_signoff` calls `ingest_labor_finding` with `extracted_findings`.
+3. **Batch / seed** — upload Markdown under `gs://robo-reliance-ops-field-learnings/` and import:
+
+```bash
+TOKEN=$(gcloud auth print-access-token)
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "x-goog-user-project: robo-reliance-ops" \
+  -H "Content-Type: application/json" \
+  "https://discoveryengine.googleapis.com/v1/projects/robo-reliance-ops/locations/global/collections/default_collection/dataStores/field-learnings/branches/default_branch/documents:import" \
+  -d '{
+    "gcsSource": {
+      "inputUris": ["gs://robo-reliance-ops-field-learnings/**"],
+      "dataSchema": "content"
+    },
+    "reconciliationMode": "INCREMENTAL"
+  }'
+```
+
+Sample fixture: `deployment/fixtures/field_learnings/sample_actuator_belt.md` (already imported for smoke test).
+
+### Smoke test search
+
+```bash
+TOKEN=$(gcloud auth print-access-token)
+curl -sS -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "x-goog-user-project: robo-reliance-ops" \
+  -H "Content-Type: application/json" \
+  "https://discoveryengine.googleapis.com/v1/projects/robo-reliance-ops/locations/global/collections/default_collection/engines/field-learnings/servingConfigs/default_search:search" \
+  -d '{"query":"actuator belt A-17","pageSize":3,"contentSearchSpec":{"snippetSpec":{"returnSnippet":true}}}' \
+  | python3 -m json.tool | head -80
+```

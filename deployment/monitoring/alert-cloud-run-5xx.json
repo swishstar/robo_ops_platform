@@ -1,0 +1,34 @@
+{
+  "displayName": "Cloud Run 5xx spike",
+  "documentation": {
+    "content": "Elevated 5xx responses on Inner Loop Cloud Run services.",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "5xx request count elevated",
+      "conditionThreshold": {
+        "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"5xx\" AND resource.labels.service_name=monitoring.regex.full_match(\"inner-loop-.*\")",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0.05,
+        "duration": "300s",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "groupByFields": ["resource.label.service_name"]
+          }
+        ],
+        "trigger": { "count": 1 }
+      }
+    }
+  ],
+  "combiner": "OR",
+  "enabled": true,
+  "notificationChannels": [
+    "projects/robo-reliance-ops/notificationChannels/14286568972661224913",
+    "projects/robo-reliance-ops/notificationChannels/10886866853074111990"
+  ],
+  "alertStrategy": { "autoClose": "1800s" }
+}

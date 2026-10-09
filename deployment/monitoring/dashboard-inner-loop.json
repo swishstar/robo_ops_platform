@@ -1,0 +1,248 @@
+{
+  "displayName": "Inner Loop Ops",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run request count",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"run.googleapis.com/request_count\" AND resource.labels.service_name=monitoring.regex.full_match(\"inner-loop-.*\")",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["resource.label.service_name"]
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "legendTemplate": "${resource.labels.service_name}"
+              }
+            ],
+            "yAxis": { "label": "req/s", "scale": "LINEAR" }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run latency p95 (ms)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"run.googleapis.com/request_latencies\" AND resource.labels.service_name=monitoring.regex.full_match(\"inner-loop-.*\")",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_DELTA",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_95",
+                      "groupByFields": ["resource.label.service_name"]
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "legendTemplate": "${resource.labels.service_name}"
+              }
+            ],
+            "yAxis": { "label": "ms", "scale": "LINEAR" }
+          }
+        }
+      },
+      {
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run 5xx responses",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"5xx\" AND resource.labels.service_name=monitoring.regex.full_match(\"inner-loop-.*\")",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["resource.label.service_name"]
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "legendTemplate": "${resource.labels.service_name}"
+              }
+            ],
+            "yAxis": { "label": "5xx/s", "scale": "LINEAR" }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run container CPU utilization",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"run.googleapis.com/container/cpu/utilizations\" AND resource.labels.service_name=monitoring.regex.full_match(\"inner-loop-.*\")",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_MEAN",
+                      "crossSeriesReducer": "REDUCE_MEAN",
+                      "groupByFields": ["resource.label.service_name"]
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "legendTemplate": "${resource.labels.service_name}"
+              }
+            ],
+            "yAxis": { "label": "util", "scale": "LINEAR" }
+          }
+        }
+      },
+      {
+        "yPos": 8,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud SQL CPU utilization",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloudsql_database\" AND metric.type=\"cloudsql.googleapis.com/database/cpu/utilization\" AND resource.labels.database_id=monitoring.regex.full_match(\".*inner-loop-pg-dev\")",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE"
+              }
+            ],
+            "yAxis": { "label": "util", "scale": "LINEAR" }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 8,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud SQL connections",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloudsql_database\" AND metric.type=\"cloudsql.googleapis.com/database/network/connections\" AND resource.labels.database_id=monitoring.regex.full_match(\".*inner-loop-pg-dev\")",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE"
+              }
+            ],
+            "yAxis": { "label": "connections", "scale": "LINEAR" }
+          }
+        }
+      },
+      {
+        "yPos": 12,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud SQL memory utilization",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloudsql_database\" AND metric.type=\"cloudsql.googleapis.com/database/memory/utilization\" AND resource.labels.database_id=monitoring.regex.full_match(\".*inner-loop-pg-dev\")",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE"
+              }
+            ],
+            "yAxis": { "label": "util", "scale": "LINEAR" }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 12,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud SQL disk utilization",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloudsql_database\" AND metric.type=\"cloudsql.googleapis.com/database/disk/utilization\" AND resource.labels.database_id=monitoring.regex.full_match(\".*inner-loop-pg-dev\")",
+                    "aggregation": {
+                      "alignmentPeriod": "60s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE"
+              }
+            ],
+            "yAxis": { "label": "util", "scale": "LINEAR" }
+          }
+        }
+      },
+      {
+        "yPos": 16,
+        "width": 12,
+        "height": 4,
+        "widget": {
+          "title": "Orchestrator /health uptime (passed)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.labels.check_id=\"orchestrator-health-eCfhE3S0gLM\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_FRACTION_TRUE",
+                      "crossSeriesReducer": "REDUCE_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE"
+              }
+            ],
+            "yAxis": { "label": "pass fraction", "scale": "LINEAR" }
+          }
+        }
+      }
+    ]
+  }
+}

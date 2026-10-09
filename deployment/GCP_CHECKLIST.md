@@ -302,24 +302,27 @@ The platform has two IAM layers: **GCP IAM** (who can reach each Cloud Run servi
 ### G3. CI/CD pipeline
 
 The Cloud Build config and CI/CD service account are already provisioned by Terraform.
+`cloudbuild.googleapis.com` is in `apis.tf` (enabled 2026-10-08 after billing reopen).
 
-- [ ] **G3a. Connect GitHub repo to Cloud Build**
+- [x] **G3a. Connect GitHub repo to Cloud Build**
+  Done 2026-10-08 — trigger `deploy-on-push-to-main` (`11f4abc1-eb7f-4492-9e35-0f20d2137811`):
+  - Repo: `swishstar/robo_ops_platform`
+  - Branch: `^main$`
+  - Config: `deployment/cloudbuild/build-images.yaml`
+  - Service account: `inner-loop-cicd@robo-reliance-ops.iam.gserviceaccount.com`
   ```bash
-  # In Console: https://console.cloud.google.com/cloud-build/triggers?project=robo-reliance-ops
-  # 1. Connect Repository → GitHub → select robo-ai-architecture repo
-  # 2. Create Trigger:
-  #    - Name: deploy-on-push-to-main
-  #    - Event: Push to branch
-  #    - Branch: ^main$
-  #    - Cloud Build config: deployment/cloudbuild/build-images.yaml
-  #    - Service account: inner-loop-cicd@robo-reliance-ops.iam.gserviceaccount.com
+  # Console: https://console.cloud.google.com/cloud-build/triggers?project=robo-reliance-ops
+  gcloud builds triggers describe deploy-on-push-to-main --project=robo-reliance-ops
   ```
 
-- [ ] **G3b. Verify CI/CD service account permissions**
-  Already provisioned by Terraform (`iam.tf`):
+- [x] **G3b. Verify CI/CD service account permissions**
+  Confirmed 2026-10-08 on `inner-loop-cicd@robo-reliance-ops.iam.gserviceaccount.com`:
   - `roles/run.admin` — deploy to Cloud Run
   - `roles/artifactregistry.writer` — push images
   - `roles/iam.serviceAccountUser` — impersonate orchestrator + MCP SAs during deploy
+  - `roles/logging.logWriter` — added for custom-SA builds (also in `iam.tf`)
+
+  Also granted default Cloud Build / Compute SA storage + deploy IAM for manual `gcloud builds submit`.
 
   Verify:
   ```bash
@@ -329,7 +332,8 @@ The Cloud Build config and CI/CD service account are already provisioned by Terr
     --format="table(bindings.role)"
   ```
 
-- [ ] **G3c. Test a manual Cloud Build run**
+- [x] **G3c. Test a manual Cloud Build run**
+  Succeeded 2026-10-08 (after recreating VPC connector `inner-loop-connector` which was in ERROR from the billing outage).
   ```bash
   gcloud builds submit . \
     --config=deployment/cloudbuild/build-images.yaml \
@@ -342,35 +346,36 @@ The Cloud Build config and CI/CD service account are already provisioned by Terr
 
 ### G4. Monitoring & alerting
 
-- [ ] **G4a. Cloud Run health check alerts**
-  Create a log-based alert for orchestrator startup failures or unhealthy responses:
-  ```bash
-  gcloud logging metrics create orchestrator-errors \
-    --project=robo-reliance-ops \
-    --description="Cloud Run orchestrator error logs" \
-    --log-filter='resource.type="cloud_run_revision" AND resource.labels.service_name="inner-loop-orchestrator" AND severity>=ERROR'
-  ```
-  Then create an alerting policy in Console or via `gcloud alpha monitoring policies create`.
+Done 2026-10-08. Dashboard JSON + alert policy files live under `deployment/monitoring/`.
 
-- [ ] **G4b. Uptime checks**
-  ```bash
-  # Console: https://console.cloud.google.com/monitoring/uptime?project=robo-reliance-ops
-  # Create an HTTPS uptime check:
-  #   - URL: https://inner-loop-orchestrator-611591209386.us-central1.run.app/health
-  #   - Check interval: 5 minutes
-  #   - Auth: Service account identity token
-  #   - Alert on failure
-  ```
+- [x] **G4a. Cloud Run health check alerts**
+  Log metrics: `orchestrator-errors`, `cloud-run-errors`, `cloudbuild-failures`.
+  Alert policies: **Orchestrator error rate**, **Cloud Build failures**.
+  Email channels: **Robo ops alerts** → `steve.wishstar@roboreliance.com`,
+  **Robo ops alerts (redefine)** → `steve.wishstar@redefine.com`
+  (Verify redefine.com via the Monitoring verification email/code.)
 
-- [ ] **G4c. Cloud Trace**
-  Enabled by default on Cloud Run. View traces at:
+- [x] **G4b. Uptime checks**
+  Check **Orchestrator /health** (`orchestrator-health-eCfhE3S0gLM`):
+  - Resource: Cloud Run `inner-loop-orchestrator` (OIDC service-agent auth)
+  - Path `/health`, period 5m
+  - Alert: **Orchestrator uptime failure**
+  - Also: **Cloud Run 5xx spike** on `inner-loop-*`
+  Monitoring SAs granted `roles/run.invoker` on orchestrator.
+
+- [x] **G4c. Cloud Trace**
+  `cloudtrace.googleapis.com` enabled. View:
   `https://console.cloud.google.com/traces?project=robo-reliance-ops`
 
-- [ ] **G4d. Dashboard**
-  Create a Cloud Monitoring dashboard with:
-  - Cloud Run request count, latency (p50/p95/p99), error rate for all 4 services
-  - Cloud SQL connections, CPU, memory, disk usage
-  - MCP adapter response times
+- [x] **G4d. Dashboard**
+  Dashboard **Inner Loop Ops** (`941a1980-87eb-465c-a4f0-bf2d98daa2b7`):
+  Cloud Run request count / p95 latency / 5xx / CPU, Cloud SQL CPU / connections / memory / disk, uptime pass rate.
+  ```bash
+  # Recreate from repo:
+  gcloud monitoring dashboards create --project=robo-reliance-ops \
+    --config-from-file=deployment/monitoring/dashboard-inner-loop.json
+  ```
+  Open: https://console.cloud.google.com/monitoring/dashboards/builder/941a1980-87eb-465c-a4f0-bf2d98daa2b7?project=robo-reliance-ops
 
 ---
 
@@ -387,8 +392,14 @@ The `lookup_technical_sop` tool calls Discovery Engine when `ENVIRONMENT != deve
 - [x] **G5c. Wire the tool to the real endpoint**
   `orchestrator/vertex_search.py` + `lookup_technical_sop` call `:search` with ADC. Terraform sets `SOP_SEARCH_ENDPOINT` and grants `roles/discoveryengine.user` to the orchestrator SA.
 
-- [ ] **G5d. (Optional) Field learnings corpus**
-  Create a second data store for field learnings captured from completed visits. Feed `extracted_findings` from `labor_logs` into this corpus to enable cross-visit knowledge retrieval. Endpoint env var already reserved: `FIELD_LEARNINGS_SEARCH_ENDPOINT`.
+- [x] **G5d. Field learnings corpus**
+  Done 2026-10-09:
+  - Data store + engine `field-learnings` (smoke search returns actuator-belt sample)
+  - Bucket `gs://robo-reliance-ops-field-learnings/`
+  - Production upsert in `orchestrator/field_learnings_ingest.py`; sign-off hooks `ingest_labor_finding`
+  - Orchestrator SA granted `roles/discoveryengine.editor` (also in `iam.tf`)
+  - Endpoint already reserved: `FIELD_LEARNINGS_SEARCH_ENDPOINT`
+  - Details: [deployment/docs/VERTEX_AI_SEARCH_SETUP.md](docs/VERTEX_AI_SEARCH_SETUP.md)
 
 ---
 

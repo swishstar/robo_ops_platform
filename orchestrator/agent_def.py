@@ -197,6 +197,22 @@ def process_visit_signoff(
         if result.status != "success":
             return {"status": "error", "message": result.message or "Sign-off rejected."}
 
+        # G5d: index visit findings into the field-learnings corpus (best-effort).
+        try:
+            from field_learnings_ingest import ingest_labor_finding
+
+            ingest_labor_finding(
+                visit_id=result.visit_id,
+                labor_log_id=str(result.labor_log_id or ""),
+                findings=findings,
+                technician_identity=technician_identity.strip(),
+                location_string=getattr(visit, "location_string", None),
+            )
+        except Exception:
+            logger.exception(
+                "field learnings ingest skipped after signoff visit_id=%s", visit_id
+            )
+
         return {
             "status": "success",
             "visit_id": result.visit_id,
