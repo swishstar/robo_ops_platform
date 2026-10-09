@@ -55,15 +55,47 @@ def _extract_iso_times(text: str) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _normalize_user_text(text: str) -> str:
+    """Strip chat @mentions (e.g. @Geary) so routing keywords match cleanly."""
+    cleaned = re.sub(r"@[\w.-]+", " ", text or "")
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
 def _looks_like_sop_query(text: str) -> bool:
     lowered = text.lower()
-    keywords = ("sop", "manual", "error code", "how do", "procedure", "maintenance", "troubleshoot")
+    keywords = (
+        "sop",
+        "manual",
+        "error code",
+        "how do",
+        "procedure",
+        "maintenance",
+        "troubleshoot",
+        "technical library",
+    )
     return any(k in lowered for k in keywords) or text.strip().endswith("?")
 
 
 def _looks_like_field_query(text: str) -> bool:
     lowered = text.lower()
-    keywords = ("field note", "last visit", "learned", "on site", "remember", "previous repair")
+    keywords = (
+        "field note",
+        "field learning",
+        "field learnings",
+        "last visit",
+        "previous visit",
+        "past visit",
+        "learn",
+        "learned",
+        "learnings",
+        "on site",
+        "onsite",
+        "remember",
+        "previous repair",
+        "what did we",
+        "what have we",
+        "from the field",
+    )
     return any(k in lowered for k in keywords)
 
 
@@ -135,9 +167,11 @@ def _gemini_turn(message: str, context: ChannelContext, visit_hint: dict[str, An
 def handle_agent_turn(message: str, context: ChannelContext) -> AgentTurnResult:
     """
     Process one user message across any chat surface.
-    Rule-based routing with optional Gemini enhancement.
+
+    Deterministic tools run first (timekeeping + RAG). Gemini is only used when
+    no rule matches — it must not short-circuit grounded lookups.
     """
-    text = message.strip()
+    text = _normalize_user_text(message)
     if not text:
         return AgentTurnResult(reply_text="Please send a message or question.")
 
@@ -148,10 +182,6 @@ def handle_agent_turn(message: str, context: ChannelContext) -> AgentTurnResult:
             pass
         else:
             visit_hint = None
-
-    gemini_result = _gemini_turn(text, context, visit_hint)
-    if gemini_result and not _looks_like_clock_out(text) and not _looks_like_clock_in(text):
-        return gemini_result
 
     tool_calls: list[dict[str, Any]] = []
     citations: list[str] = []
@@ -258,9 +288,13 @@ def handle_agent_turn(message: str, context: ChannelContext) -> AgentTurnResult:
             tool_calls=tool_calls,
         )
 
+    gemini_result = _gemini_turn(text, context, visit_hint)
+    if gemini_result and (gemini_result.reply_text or "").strip():
+        return gemini_result
+
     return AgentTurnResult(
         reply_text=(
             "I can help with SOP lookups, field learnings, visit context, and timekeeping. "
-            "Try: 'What is error code A-17?' or 'clock out' with ISO times and findings."
+            "Try: 'What did we learn about actuator belts?' or 'What is error code A-17?'"
         )
     )
