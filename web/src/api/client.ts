@@ -74,13 +74,22 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return parseJsonResponse<T>(res);
 }
 
+export interface ClientInfo {
+  id: string;
+  display_name: string;
+}
+
 export const api = {
+  listClients: () =>
+    request<{ default_client_id: string; clients: ClientInfo[] }>("/api/v1/clients"),
+
   createVisit: (body: {
     location_string: string;
     metadata_poc: { name: string; phone: string; email: string };
+    client_id?: string;
     slack_channel_id?: string;
   }) =>
-    request<{ visit_id: string; visit_state: string }>("/api/v1/visits", {
+    request<{ visit_id: string; visit_state: string; client_id?: string }>("/api/v1/visits", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -139,6 +148,7 @@ export interface Visit {
   google_space_id: string;
   location_string: string;
   metadata_poc: { name: string; phone: string; email: string };
+  client_id?: string | null;
   current_state: string;
   created_at: string;
   technician_identity?: string;

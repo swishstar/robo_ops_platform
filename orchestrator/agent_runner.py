@@ -114,7 +114,10 @@ def _looks_like_clock_out(text: str) -> bool:
 
 def _run_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     dispatch: dict[str, Callable[..., Any]] = {
-        "lookup_technical_sop": lambda: lookup_technical_sop(args.get("query", "")),
+        "lookup_technical_sop": lambda: lookup_technical_sop(
+            args.get("query", ""),
+            client_id=args.get("client_id"),
+        ),
         "lookup_field_learnings": lambda: lookup_field_learnings(args.get("query", "")),
         "get_visit_context": lambda: get_visit_context(args.get("visit_id", "")),
         "process_visit_signoff": lambda: process_visit_signoff(
@@ -270,10 +273,16 @@ def handle_agent_turn(message: str, context: ChannelContext) -> AgentTurnResult:
         return AgentTurnResult(reply_text=content, tool_calls=tool_calls, citations=citations)
 
     if _looks_like_sop_query(text):
-        result = _run_tool("lookup_technical_sop", {"query": text})
+        client_id = None
+        if isinstance(visit_hint, dict):
+            client_id = visit_hint.get("client_id")
+        result = _run_tool(
+            "lookup_technical_sop",
+            {"query": text, "client_id": client_id},
+        )
         content = result.get("content", str(result))
         tool_calls.append({"tool": "lookup_technical_sop", "result": result})
-        citations.append("sop_library")
+        citations.append(f"sop:{client_id}" if client_id else "sop_library")
         return AgentTurnResult(reply_text=content, tool_calls=tool_calls, citations=citations)
 
     if context.visit_id:

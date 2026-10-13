@@ -13,6 +13,7 @@ from pydantic import BaseModel, EmailStr, Field
 from agent_def import process_visit_signoff
 from agent_runner import ChannelContext, handle_agent_turn
 from auth import AuthenticatedUser, get_current_user, require_finance_manager
+from client_corpus import list_known_clients, normalize_client_id
 from database import (
     clock_in_transaction,
     create_visit,
@@ -36,6 +37,11 @@ class PointOfContact(BaseModel):
 class CreateVisitRequest(BaseModel):
     location_string: str = Field(..., min_length=3)
     metadata_poc: PointOfContact
+    client_id: Optional[str] = Field(
+        default=None,
+        max_length=64,
+        description="Client key selecting the SOP corpus (e.g. chef).",
+    )
     slack_channel_id: Optional[str] = Field(default=None, max_length=100)
 
 
@@ -116,15 +122,33 @@ def _serialize_row(row: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+@router.get("/clients")
+async def api_list_clients(
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Known clients for visit intake + SOP corpus routing."""
+    del user  # auth required; payload is not user-scoped
+    return list_known_clients()
+
+
 @router.post("/visits")
 async def api_create_visit(
     body: CreateVisitRequest,
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
+    try:
+        client_id = normalize_client_id(body.client_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    if client_id is None:
+        client_id = list_known_clients().get("default_client_id") or "chef"
+
     visit = create_visit(
         location_string=body.location_string.strip(),
         metadata_poc=body.metadata_poc.model_dump(),
         slack_channel_id=body.slack_channel_id,
+        client_id=client_id,
         source="web_app",
     )
     return {
@@ -133,6 +157,7 @@ async def api_create_visit(
         "google_space_id": visit.google_space_id,
         "slack_channel_id": visit.slack_channel_id,
         "location_string": visit.location_string,
+        "client_id": visit.client_id,
         "visit_state": visit.current_state,
     }
 

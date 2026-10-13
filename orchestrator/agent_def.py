@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any
+from typing import Any, Optional
 
 from google_agents_cli_adk import Agent, Gemini, Tool
 
+from client_corpus import resolve_sop_endpoint
 from database import (
     clock_in_transaction,
     get_visit_by_id,
@@ -30,20 +31,24 @@ SOP_INDEX_ENDPOINT = os.getenv(
 
 
 @Tool
-def lookup_technical_sop(query: str) -> str:
+def lookup_technical_sop(query: str, client_id: Optional[str] = None) -> str:
     """
-    Queries the robot manuals and operational standard operating procedures (SOPs).
-    This tool connects directly to the Vertex AI Search Index pointing to Google Drive /03_Technical_Library.
+    Queries client-scoped SOP manuals via Vertex AI Search.
+    Pass client_id (from the visit) to select that client's corpus; otherwise uses the
+    shared default SOP index.
     """
     normalized_query = query.strip()
     if not normalized_query:
         return "Error: SOP query must not be empty."
+
+    endpoint = resolve_sop_endpoint(client_id)
 
     # Local development returns deterministic grounding stubs; non-dev calls Vertex AI Search.
     if os.getenv("ENVIRONMENT", "development") == "development":
         return (
             "SOP Context (local stub):\n"
             f"- Query: {normalized_query}\n"
+            f"- Client: {client_id or 'default'}\n"
             "- Source: /03_Technical_Library/RR-FieldOps/Maintenance_Checklist.pdf\n"
             "- Guidance: Verify E-stop latch, run actuator self-test (code A-17), "
             "capture torque readings before releasing the visit for sign-off.\n"
@@ -53,14 +58,18 @@ def lookup_technical_sop(query: str) -> str:
     try:
         from vertex_search import search_vertex_ai
 
-        return search_vertex_ai(normalized_query, SOP_INDEX_ENDPOINT)
+        result = search_vertex_ai(normalized_query, endpoint)
+        if client_id:
+            return f"SOP Context (client={client_id}):\n{result}"
+        return result
     except Exception as exc:
         logger.exception("lookup_technical_sop Vertex AI Search failed")
         return (
             "SOP Context (search unavailable):\n"
             f"- Query: {normalized_query}\n"
+            f"- Client: {client_id or 'default'}\n"
             f"- Error: {exc}\n"
-            f"- Index: {SOP_INDEX_ENDPOINT}"
+            f"- Index: {endpoint}"
         )
 
 
@@ -243,7 +252,8 @@ tech_support_agent = Agent(
     and Slack (client-facing) surfaces.
 
     Operations Guidelines:
-    1. Ground engineering lookups with 'lookup_technical_sop' first (authoritative SOPs).
+    1. Ground engineering lookups with 'lookup_technical_sop' first (authoritative SOPs),
+       passing the visit's client_id so the correct client corpus is searched.
        Use 'lookup_field_learnings' for on-site discoveries from past visit channels.
        Always cite sources — Drive paths or field-learning citations.
     2. Use 'get_visit_context' when a visit_id or bound channel is available.

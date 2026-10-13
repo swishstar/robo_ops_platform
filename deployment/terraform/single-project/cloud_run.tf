@@ -194,6 +194,15 @@ resource "google_cloud_run_v2_service" "orchestrator" {
         name  = "SOP_SEARCH_ENDPOINT"
         value = "https://discoveryengine.googleapis.com/v1/projects/${var.project_id}/locations/global/collections/default_collection/engines/sop-library-search/servingConfigs/default_search"
       }
+      # Per-client SOP engines (JSON). DB platform_configs.client_sop_endpoints is also consulted;
+      # this env overlay wins when both are set.
+      env {
+        name = "CLIENT_SOP_ENDPOINTS"
+        value = jsonencode({
+          chef         = "https://discoveryengine.googleapis.com/v1/projects/${var.project_id}/locations/global/collections/default_collection/engines/sop-chef/servingConfigs/default_search"
+          roboreliance = "https://discoveryengine.googleapis.com/v1/projects/${var.project_id}/locations/global/collections/default_collection/engines/sop-library-search/servingConfigs/default_search"
+        })
+      }
       env {
         name  = "GOOGLE_CLOUD_PROJECT"
         value = var.project_id

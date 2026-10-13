@@ -52,6 +52,7 @@ class VisitRecord:
     location_string: str
     metadata_poc: dict[str, Any]
     current_state: str
+    client_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -526,6 +527,7 @@ def create_visit(
     metadata_poc: dict[str, Any],
     slack_channel_id: str | None = None,
     google_space_id: str | None = None,
+    client_id: str | None = None,
     source: str = "web_app",
 ) -> VisitRecord:
     """Deterministic visit creation — primary entry point for web app and Slack intake."""
@@ -535,16 +537,18 @@ def create_visit(
             cur.execute(
                 """
                 INSERT INTO visits
-                    (slack_channel_id, google_space_id, location_string, metadata_poc, current_state)
-                VALUES (%s, %s, %s, %s::jsonb, 'initiated')
+                    (slack_channel_id, google_space_id, location_string, metadata_poc,
+                     client_id, current_state)
+                VALUES (%s, %s, %s, %s::jsonb, %s, 'initiated')
                 RETURNING visit_id, slack_channel_id, google_space_id, location_string,
-                          metadata_poc, current_state::text
+                          metadata_poc, client_id, current_state::text
                 """,
                 (
                     slack_channel_id,
                     space_id,
                     location_string,
                     _json(metadata_poc),
+                    client_id,
                 ),
             )
             row = cur.fetchone()
@@ -556,6 +560,7 @@ def create_visit(
                     "slack_channel_id": slack_channel_id,
                     "location_string": location_string,
                     "metadata_poc": metadata_poc,
+                    "client_id": client_id,
                     "source": source,
                 },
                 output_receipt={"google_space_id": space_id, "current_state": "initiated"},
@@ -567,6 +572,7 @@ def create_visit(
         location_string=row["location_string"],
         metadata_poc=dict(row["metadata_poc"]),
         current_state=row["current_state"],
+        client_id=row.get("client_id"),
     )
 
 
@@ -593,7 +599,7 @@ def get_visit_by_id(visit_id: str) -> dict[str, Any] | None:
             cur.execute(
                 """
                 SELECT visit_id, slack_channel_id, google_space_id, location_string,
-                       metadata_poc, current_state::text AS current_state,
+                       metadata_poc, client_id, current_state::text AS current_state,
                        created_at, updated_at
                 FROM visits
                 WHERE visit_id = %s
@@ -823,7 +829,7 @@ def list_visits(
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     query = f"""
         SELECT v.visit_id, v.slack_channel_id, v.google_space_id, v.location_string,
-               v.metadata_poc, v.current_state::text AS current_state,
+               v.metadata_poc, v.client_id, v.current_state::text AS current_state,
                v.created_at, v.updated_at,
                ll.technician_identity,
                fl.approval_state AS pay_status,
@@ -1078,7 +1084,7 @@ def get_visit_by_google_space_id(google_space_id: str) -> dict[str, Any] | None:
             cur.execute(
                 """
                 SELECT visit_id, slack_channel_id, google_space_id, location_string,
-                       metadata_poc, current_state::text AS current_state
+                       metadata_poc, client_id, current_state::text AS current_state
                 FROM visits WHERE google_space_id = %s
                 """,
                 (google_space_id,),
@@ -1093,12 +1099,12 @@ def get_visit_by_slack_channel_id(slack_channel_id: str) -> dict[str, Any] | Non
             cur.execute(
                 """
                 SELECT v.visit_id, v.slack_channel_id, v.google_space_id, v.location_string,
-                       v.metadata_poc, v.current_state::text AS current_state
+                       v.metadata_poc, v.client_id, v.current_state::text AS current_state
                 FROM visits v
                 WHERE v.slack_channel_id = %s
                 UNION
                 SELECT v.visit_id, v.slack_channel_id, v.google_space_id, v.location_string,
-                       v.metadata_poc, v.current_state::text AS current_state
+                       v.metadata_poc, v.client_id, v.current_state::text AS current_state
                 FROM slack_channel_visit_bindings b
                 JOIN visits v ON v.visit_id = b.visit_id
                 WHERE b.slack_channel_id = %s
@@ -1122,6 +1128,7 @@ def get_visit_context_payload(visit_id: str) -> dict[str, Any]:
         "status": "success",
         "visit_id": str(detail["visit_id"]),
         "location_string": detail["location_string"],
+        "client_id": detail.get("client_id"),
         "current_state": detail["current_state"],
         "slack_channel_id": detail.get("slack_channel_id"),
         "google_space_id": detail.get("google_space_id"),

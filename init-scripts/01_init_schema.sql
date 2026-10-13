@@ -19,6 +19,7 @@ CREATE TABLE visits (
     google_space_id VARCHAR(255) UNIQUE,
     location_string TEXT NOT NULL,
     metadata_poc JSONB NOT NULL,
+    client_id VARCHAR(64),
     current_state visit_status NOT NULL DEFAULT 'initiated',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -26,6 +27,7 @@ CREATE TABLE visits (
 
 CREATE INDEX idx_visits_current_state ON visits (current_state);
 CREATE INDEX idx_visits_slack_channel_id ON visits (slack_channel_id);
+CREATE INDEX idx_visits_client_id ON visits (client_id);
 
 -- 2. Labor Tracking Ledger
 CREATE TABLE labor_logs (

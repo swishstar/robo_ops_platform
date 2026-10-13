@@ -22,6 +22,12 @@ export function VisitDetailPage() {
       <h1>{data.location_string}</h1>
       <p>
         State: <span className={`badge state-${data.current_state}`}>{data.current_state}</span>
+        {data.client_id && (
+          <>
+            {" "}
+            · Client: <strong>{data.client_id}</strong>
+          </>
+        )}
       </p>
       <p>POC: {data.metadata_poc.name} — {data.metadata_poc.phone}</p>
       {data.slack_channel_id && <p>Slack: {data.slack_channel_id} (client/external)</p>}

@@ -15,7 +15,7 @@ AI interprets; **deterministic Python tools validate and execute**. The LLM neve
 - **Backend:** FastAPI (Python 3.9+), Google ADK, psycopg2/asyncpg, Cloud Run
 - **Frontend:** React 18 + TypeScript, Vite, TanStack Query, react-router-dom
 - **Database:** PostgreSQL (Cloud SQL) — schema in `init-scripts/`
-- **RAG:** Vertex AI Search — dual corpus (SOP + field learnings)
+- **RAG:** Vertex AI Search — dual corpus (per-client SOP engines + field learnings)
 - **Integrations:** MCP JSON-RPC servers for QuickBooks and LinkedIn
 - **Chat:** Google Chat agent (internal), Slack agent (external)
 - **Auth:** IAP JWT (production), `X-User-Email`/`X-User-Role` headers (dev)

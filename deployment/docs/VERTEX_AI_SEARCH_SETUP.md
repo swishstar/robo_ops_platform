@@ -64,6 +64,48 @@ curl -sS -X POST \
 
 Then in Google Chat: `@Geary what is error code A-17`
 
+## Multi-client SOP corpora (G5e)
+
+One Geary agent; **per-client data stores**. Visit `client_id` selects the engine.
+
+| Client ID | Data store / engine | Drive source |
+|---|---|---|
+| `chef` | `sop-chef` | [Shared Drive folder](https://drive.google.com/drive/folders/1quTosmucf3hb3fjrWCSW2keudcd7Yj5I) |
+| `roboreliance` | `sop-library` / `sop-library-search` | Shared /03_Technical_Library + GCS seed |
+
+Routing:
+
+1. `visits.client_id` set at intake (web **Client** dropdown)
+2. `lookup_technical_sop(query, client_id=…)` → `client_corpus.resolve_sop_endpoint`
+3. Endpoints from `CLIENT_SOP_ENDPOINTS` env (Terraform) and/or `platform_configs.client_sop_endpoints`
+
+### Provision Chef store + attach Drive
+
+```bash
+gcloud auth login   # if tokens expired
+./deployment/scripts/provision-sop-chef.sh
+```
+
+Then in Console (Drive OAuth cannot be fully automated):
+
+1. [sop-chef data store](https://console.cloud.google.com/gen-app-builder/data-stores/sop-chef?project=robo-reliance-ops)
+2. **Add data** → **Google Drive** → folder `1quTosmucf3hb3fjrWCSW2keudcd7Yj5I`
+3. Grant the connector Google account **Viewer** (or higher) on the Shared Drive
+4. Wait for indexing
+
+Apply DB migration on Cloud SQL / local Postgres:
+
+```bash
+psql "$DATABASE_URL" -f init-scripts/05_client_corpus.sql
+```
+
+### Add another client later
+
+1. Create `sop-<client>` data store + engine (copy `provision-sop-chef.sh`)
+2. Attach that client's Drive folder in Console
+3. Insert/update `platform_configs.clients` + `client_sop_endpoints` (and Terraform `CLIENT_SOP_ENDPOINTS`)
+4. No new agent required
+
 ## Field learnings (G5d)
 
 Provisioned 2026-10-08/09:

@@ -115,10 +115,10 @@ External finance gateway for programmatic approve/reject (e.g. from Slack bots o
 
 ## RAG dual corpus
 
-- **SOP** (`lookup_technical_sop`): Google Drive `/03_Technical_Library`
+- **SOP** (`lookup_technical_sop`): per-client Vertex AI Search engines (e.g. Chef Shared Drive → `sop-chef`; internal → `sop-library-search`). Visit `client_id` selects the engine.
 - **Field learnings** (`lookup_field_learnings`): auto-indexed from Google Chat + Slack channels
 
-Agent prefers SOP for authoritative answers; surfaces field learnings for novel on-site discoveries.
+Agent prefers SOP for authoritative answers; surfaces field learnings for novel on-site discoveries. One agent serves all clients — do not create a separate Chat agent per client.
 
 ---
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 
@@ -9,13 +9,23 @@ export function NewVisitPage() {
   const [pocName, setPocName] = useState("");
   const [pocPhone, setPocPhone] = useState("");
   const [pocEmail, setPocEmail] = useState("");
+  const [clientId, setClientId] = useState("");
   const [slackChannel, setSlackChannel] = useState("");
+
+  const clientsQuery = useQuery({
+    queryKey: ["clients"],
+    queryFn: () => api.listClients(),
+  });
+
+  const defaultClientId = clientsQuery.data?.default_client_id ?? "chef";
+  const effectiveClientId = clientId || defaultClientId;
 
   const createMut = useMutation({
     mutationFn: () =>
       api.createVisit({
         location_string: location,
         metadata_poc: { name: pocName, phone: pocPhone, email: pocEmail },
+        client_id: effectiveClientId,
         slack_channel_id: slackChannel || undefined,
       }),
     onSuccess: (data) => navigate(`/visits/${data.visit_id}`),
@@ -25,7 +35,8 @@ export function NewVisitPage() {
     location.length >= 3 &&
     pocName.length >= 2 &&
     pocPhone.length >= 7 &&
-    pocEmail.includes("@");
+    pocEmail.includes("@") &&
+    Boolean(effectiveClientId);
 
   return (
     <section>
@@ -33,6 +44,24 @@ export function NewVisitPage() {
       <h1>New Service Request</h1>
 
       <div className="panel">
+        <label>
+          Client
+          <select
+            value={effectiveClientId}
+            onChange={(e) => setClientId(e.target.value)}
+            disabled={clientsQuery.isLoading}
+          >
+            {(clientsQuery.data?.clients ?? [{ id: "chef", display_name: "Chef" }]).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.display_name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="hint">
+          Selects which SOP library Geary searches for this visit (e.g. Chef Drive folder).
+        </p>
+
         <label>
           Location
           <input

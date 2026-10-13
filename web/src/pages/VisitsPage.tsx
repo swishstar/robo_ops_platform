@@ -61,6 +61,7 @@ export function VisitsPage() {
         <thead>
           <tr>
             <th>Location</th>
+            <th>Client</th>
             <th>State</th>
             <th>Technician</th>
             <th>Pay Status</th>
@@ -74,6 +75,7 @@ export function VisitsPage() {
               <td>
                 <Link to={`/visits/${v.visit_id}`}>{v.location_string}</Link>
               </td>
+              <td>{v.client_id ?? "—"}</td>
               <td>
                 <span className={`badge state-${v.current_state}`}>{v.current_state}</span>
               </td>
