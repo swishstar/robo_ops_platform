@@ -46,6 +46,18 @@ body {
   font-size: 0.85rem;
 }
 
+.dev-auth button.active-role {
+  background: #38bdf8;
+  color: #0f172a;
+  border-color: #38bdf8;
+  font-weight: 600;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85em;
+}
+
 main {
   max-width: 1100px;
   margin: 0 auto;
@@ -418,6 +430,67 @@ legend {
   padding: 0.35rem 0.5rem;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: flex-end;
+  margin: 0.5rem 0 1rem;
+}
+
+.filter-bar label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: #475569;
+}
+
+.filter-bar input {
+  padding: 0.35rem 0.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.timesheet-page .data-table {
+  min-width: 1100px;
+}
+
+main:has(.timesheet-page) {
+  max-width: 1280px;
+}
+
+.amount-source,
+.cell-sub {
+  display: block;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.notes-cell {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flag-select {
+  min-width: 4.5rem;
+}
+
+.empty-state {
+  padding: 1rem;
+  background: #fff;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  color: #475569;
 }
 
 .badge.state-pending_review { background: #fef3c7; color: #92400e; }

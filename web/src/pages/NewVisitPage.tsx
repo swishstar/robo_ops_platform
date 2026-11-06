@@ -6,6 +6,7 @@ import { api } from "../api/client";
 export function NewVisitPage() {
   const navigate = useNavigate();
   const [location, setLocation] = useState("");
+  const [workOrder, setWorkOrder] = useState("");
   const [pocName, setPocName] = useState("");
   const [pocPhone, setPocPhone] = useState("");
   const [pocEmail, setPocEmail] = useState("");
@@ -26,6 +27,7 @@ export function NewVisitPage() {
         location_string: location,
         metadata_poc: { name: pocName, phone: pocPhone, email: pocEmail },
         client_id: effectiveClientId,
+        work_order_number: workOrder || undefined,
         slack_channel_id: slackChannel || undefined,
       }),
     onSuccess: (data) => navigate(`/visits/${data.visit_id}`),
@@ -68,6 +70,15 @@ export function NewVisitPage() {
             value={location}
             onChange={(e) => setLocation(e.target.value)}
             placeholder="e.g. 1234 Industrial Pkwy, Suite 200"
+          />
+        </label>
+
+        <label>
+          Job ID (RoboJob)
+          <input
+            value={workOrder}
+            onChange={(e) => setWorkOrder(e.target.value)}
+            placeholder="e.g. RoboJob_00126"
           />
         </label>
 

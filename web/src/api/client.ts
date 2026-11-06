@@ -87,12 +87,16 @@ export const api = {
     location_string: string;
     metadata_poc: { name: string; phone: string; email: string };
     client_id?: string;
+    work_order_number?: string;
     slack_channel_id?: string;
   }) =>
-    request<{ visit_id: string; visit_state: string; client_id?: string }>("/api/v1/visits", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+    request<{ visit_id: string; visit_state: string; client_id?: string; work_order_number?: string }>(
+      "/api/v1/visits",
+      {
+        method: "POST",
+        body: JSON.stringify(body),
+      },
+    ),
 
   listVisits: (params?: { state?: string; include_completed?: boolean }) => {
     const parts: string[] = [];
@@ -103,6 +107,22 @@ export const api = {
   },
 
   getVisit: (id: string) => request<VisitDetail>(`/api/v1/visits/${id}`),
+
+  updateVisit: (
+    id: string,
+    body: {
+      location_string?: string;
+      metadata_poc?: { name: string; phone: string; email: string };
+      client_id?: string;
+      work_order_number?: string;
+      slack_channel_id?: string;
+      clear_slack_channel?: boolean;
+    },
+  ) =>
+    request<VisitDetail>(`/api/v1/visits/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
 
   clockIn: (id: string) =>
     request(`/api/v1/visits/${id}/clock-in`, { method: "POST", body: "{}" }),
@@ -116,6 +136,53 @@ export const api = {
       timesheet?: TimesheetMetadata;
     },
   ) => request(`/api/v1/visits/${id}/signoff`, { method: "POST", body: JSON.stringify(body) }),
+
+  listTimesheets: (params?: {
+    technician?: string;
+    client?: string;
+    work_order?: string;
+    date_from?: string;
+    date_to?: string;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.technician) q.set("technician", params.technician);
+    if (params?.client) q.set("client", params.client);
+    if (params?.work_order) q.set("work_order", params.work_order);
+    if (params?.date_from) q.set("date_from", params.date_from);
+    if (params?.date_to) q.set("date_to", params.date_to);
+    const suffix = q.toString() ? `?${q.toString()}` : "";
+    return request<{ timesheets: TimesheetRow[]; truncated: boolean }>(
+      `/api/v1/timesheets${suffix}`,
+    );
+  },
+
+  createTimesheet: (body: {
+    visit_id: string;
+    technician_identity?: string;
+    technician_name?: string;
+    clock_in: string;
+    clock_out: string;
+    findings?: string;
+    timesheet?: TimesheetMetadata;
+    explicit_amount_cents?: number;
+  }) =>
+    request<TimesheetWriteResult>("/api/v1/timesheets", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  updateTimesheetFlags: (
+    logId: string,
+    body: {
+      paid_to_contractor: boolean | null;
+      billed_to_client: boolean | null;
+      paid_by_client: boolean | null;
+    },
+  ) =>
+    request<TimesheetRow>(`/api/v1/timesheets/${logId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
 
   financeLedgers: (params?: { approval_state?: string }) => {
     const q = params?.approval_state
@@ -149,6 +216,7 @@ export interface Visit {
   location_string: string;
   metadata_poc: { name: string; phone: string; email: string };
   client_id?: string | null;
+  work_order_number?: string | null;
   current_state: string;
   created_at: string;
   technician_identity?: string;
@@ -164,6 +232,46 @@ export interface LaborLog {
   extracted_findings: string | null;
   timesheet_metadata?: TimesheetMetadata | null;
   is_verified: boolean;
+  paid_to_contractor?: boolean | null;
+  billed_to_client?: boolean | null;
+  paid_by_client?: boolean | null;
+  billable_hours?: number | null;
+  amount_cents?: number | null;
+  payout_cents?: number | null;
+  amount_source?: string | null;
+}
+
+export interface TimesheetRow {
+  log_id: string;
+  visit_id: string;
+  technician_identity: string;
+  clock_in: string | null;
+  clock_out: string | null;
+  billable_hours: number | null;
+  amount_cents: number | null;
+  payout_cents: number | null;
+  invoice_cents?: number | null;
+  amount_source: string | null;
+  extracted_findings: string | null;
+  paid_to_contractor: boolean | null;
+  billed_to_client: boolean | null;
+  paid_by_client: boolean | null;
+  location_string: string;
+  client_id: string | null;
+  work_order_number: string | null;
+  rate_payout_cents_per_hour?: number | null;
+}
+
+export interface TimesheetWriteResult {
+  status: string;
+  log_id: string;
+  visit_id: string;
+  billable_hours: number;
+  amount_cents: number;
+  payout_cents: number;
+  amount_source: string;
+  payout_cents_per_hour?: number | null;
+  message: string;
 }
 
 export interface VisitDetail extends Visit {

@@ -404,10 +404,12 @@ The `lookup_technical_sop` tool calls Discovery Engine when `ENVIRONMENT != deve
 - [ ] **G5e. Multi-client SOP corpora**
   Code/schema landed: `visits.client_id`, `client_corpus.py`, web Client dropdown, Terraform `CLIENT_SOP_ENDPOINTS`.
   Remaining ops steps:
-  1. `gcloud auth login` then `./deployment/scripts/provision-sop-chef.sh`
-  2. Attach Chef Drive folder `1quTosmucf3hb3fjrWCSW2keudcd7Yj5I` in Console (Drive connector OAuth)
+  1. `./deployment/scripts/provision-sop-chef.sh` (store+engine+bucket — already done)
+  2. Drive sync uses **Workspace-user OAuth** (Shared Drive blocks external SAs):
+     `obtain_drive_oauth.py` → Secret Manager → `deploy-drive-sync-job.sh` →
+     `gcloud run jobs execute inner-loop-drive-sync-chef …` (**no ZIP**).
   3. Apply `init-scripts/05_client_corpus.sql` on Cloud SQL
-  4. Redeploy orchestrator (push / Cloud Build) so `CLIENT_SOP_ENDPOINTS` is live
+  4. Terraform apply / set `CLIENT_SOP_ENDPOINTS` on Cloud Run if not already live
 
 ---
 

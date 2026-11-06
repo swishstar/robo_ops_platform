@@ -166,3 +166,11 @@ def require_finance_manager(user: AuthenticatedUser) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Finance manager role required.",
         )
+
+
+def require_admin(user: AuthenticatedUser) -> None:
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required.",
+        )

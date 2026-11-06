@@ -163,8 +163,9 @@ def process_visit_signoff(
     timesheet_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    Executes core server validation on time entries, calculates billing bounds,
-    and writes to PostgreSQL database ledgers. Banned from AI generation rules.
+    Executes core server validation on time entries, calculates billing bounds
+    from per-technician rates, and writes to PostgreSQL. Clock-in is not required.
+    Each technician on a visit gets their own labor row. Banned from AI generation rules.
     """
     try:
         visit_id = visit_id.strip()
@@ -228,6 +229,8 @@ def process_visit_signoff(
             "calculated_hours": result.calculated_hours,
             "invoice_cents": result.invoice_cents,
             "payout_cents": result.payout_cents,
+            "amount_cents": result.amount_cents,
+            "amount_source": result.amount_source,
             "ledger_id": result.ledger_id,
             "labor_log_id": result.labor_log_id,
             "approval_token": result.approval_token,
@@ -257,8 +260,9 @@ tech_support_agent = Agent(
        Use 'lookup_field_learnings' for on-site discoveries from past visit channels.
        Always cite sources — Drive paths or field-learning citations.
     2. Use 'get_visit_context' when a visit_id or bound channel is available.
-    3. For clock-in, invoke 'clock_in_visit'. For completion, capture clock-in, clock-out,
-       and findings then invoke 'process_visit_signoff'.
+    3. Time can be logged after the fact. Clock-in via 'clock_in_visit' is optional.
+       Capture arrival, departure, and findings, then invoke 'process_visit_signoff'.
+       A second technician on the same visit gets their own sign-off.
     4. You cannot authorize payments or approve payouts. Never discuss approval tokens.
        Finance approval happens only in the Ops web app.
     """,

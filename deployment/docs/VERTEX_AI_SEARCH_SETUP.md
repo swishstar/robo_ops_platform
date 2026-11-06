@@ -79,19 +79,39 @@ Routing:
 2. `lookup_technical_sop(query, client_id=…)` → `client_corpus.resolve_sop_endpoint`
 3. Endpoints from `CLIENT_SOP_ENDPOINTS` env (Terraform) and/or `platform_configs.client_sop_endpoints`
 
-### Provision Chef store + attach Drive
+### Provision Chef store + Drive→GCS sync (no ZIP)
+
+`sop-chef` is a **CONTENT_REQUIRED** store (GCS import). Native Drive connectors are a
+different store type and **cannot be searched with Geary’s service account**.
+
+**Team workflow:** add/update files in the [Chef Shared Drive folder](https://drive.google.com/drive/folders/1quTosmucf3hb3fjrWCSW2keudcd7Yj5I) → automated job copies to `gs://robo-reliance-ops-sop-chef/` → Discovery Engine re-import. **No ZIP upload.**
 
 ```bash
-gcloud auth login   # if tokens expired
-./deployment/scripts/provision-sop-chef.sh
+gcloud auth login   # if needed
+./deployment/scripts/provision-sop-chef.sh          # data store + engine + bucket
+./deployment/scripts/deploy-drive-sync-job.sh       # Cloud Run Job + daily Scheduler
 ```
 
-Then in Console (Drive OAuth cannot be fully automated):
+**Shared Drive note:** If the drive blocks non-`@roboreliance.com` members, you
+**cannot** share it with a GCP service account. Sync reads Drive via **OAuth as a
+Workspace user** who is already a member (e.g. you); GCS/import still use the sync SA.
 
-1. [sop-chef data store](https://console.cloud.google.com/gen-app-builder/data-stores/sop-chef?project=robo-reliance-ops)
-2. **Add data** → **Google Drive** → folder `1quTosmucf3hb3fjrWCSW2keudcd7Yj5I`
-3. Grant the connector Google account **Viewer** (or higher) on the Shared Drive
-4. Wait for indexing
+One-time OAuth setup:
+
+1. Console → APIs & Services → Credentials → Create **OAuth client ID** (Desktop app).
+2. Download the client JSON, then as a Drive member:
+   ```bash
+   cd deployment/drive-sync && pip install -r requirements.txt
+   python obtain_drive_oauth.py --client-secrets=/path/to/client_secret.json
+   ```
+3. Store the three printed values in Secret Manager (`inner-loop-drive-oauth-*`),
+   then re-run `./deployment/scripts/deploy-drive-sync-job.sh`.
+4. Execute once:
+   ```bash
+   gcloud run jobs execute inner-loop-drive-sync-chef \
+     --region=us-central1 --project=robo-reliance-ops
+   ```
+5. Wait for indexing; smoke-test `engines/sop-chef/.../default_search:search`.
 
 Apply DB migration on Cloud SQL / local Postgres:
 

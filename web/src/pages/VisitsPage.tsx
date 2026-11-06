@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { api } from "../api/client";
+import { api, getStoredUser } from "../api/client";
 
 function formatCents(cents: number | null | undefined) {
   if (cents == null) return "—";
@@ -9,23 +9,27 @@ function formatCents(cents: number | null | undefined) {
 }
 
 const STATE_OPTIONS = [
+  { value: "__all__", label: "All" },
   { value: "", label: "Active / Upcoming" },
   { value: "initiated", label: "Initiated" },
   { value: "active", label: "Active" },
   { value: "pending_approval", label: "Pending Approval" },
   { value: "completed", label: "Completed" },
   { value: "failed", label: "Failed" },
-  { value: "__all__", label: "All" },
 ];
 
 export function VisitsPage() {
-  const [stateFilter, setStateFilter] = useState("");
+  const user = getStoredUser();
+  const isAdmin = user.role === "admin";
+  // Admins default to All (historical); techs default to their active work.
+  const [stateFilter, setStateFilter] = useState(isAdmin ? "__all__" : "");
 
-  const includeCompleted = stateFilter === "__all__" || stateFilter === "completed" || stateFilter === "failed";
+  const includeCompleted =
+    stateFilter === "__all__" || stateFilter === "completed" || stateFilter === "failed";
   const effectiveState = stateFilter === "__all__" ? undefined : stateFilter || undefined;
 
   const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ["visits", effectiveState, includeCompleted],
+    queryKey: ["visits", user.role, user.email, effectiveState, includeCompleted],
     queryFn: () =>
       api.listVisits({
         state: effectiveState,
@@ -36,11 +40,11 @@ export function VisitsPage() {
   return (
     <section>
       <div className="page-header">
-        <h1>Visits</h1>
+        <h1>{isAdmin ? "All Visits" : "My Visits"}</h1>
         <div className="header-actions">
           <select value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}>
             {STATE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
+              <option key={o.value || "active-upcoming"} value={o.value}>
                 {o.label}
               </option>
             ))}
@@ -54,12 +58,17 @@ export function VisitsPage() {
         </div>
       </div>
 
+      {!isAdmin && (
+        <p className="hint">Showing visits assigned to you. Switch to Admin for the full list.</p>
+      )}
+
       {isLoading && <p>Loading visits…</p>}
       {error && <p className="error">{(error as Error).message}</p>}
 
       <table className="data-table">
         <thead>
           <tr>
+            <th>Job ID</th>
             <th>Location</th>
             <th>Client</th>
             <th>State</th>
@@ -72,6 +81,7 @@ export function VisitsPage() {
         <tbody>
           {(data?.visits ?? []).map((v) => (
             <tr key={v.visit_id}>
+              <td className="mono">{v.work_order_number || "—"}</td>
               <td>
                 <Link to={`/visits/${v.visit_id}`}>{v.location_string}</Link>
               </td>

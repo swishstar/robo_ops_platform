@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import math
-from typing import Any, Iterator
+import re
+from typing import Any, Iterator, Optional
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -34,8 +35,12 @@ DATABASE_URL = os.getenv(
 SYNC_POOL: ThreadedConnectionPool | None = None
 ASYNC_POOL: asyncpg.Pool | None = None
 
-CLIENT_INVOICE_CENTS_PER_HOUR = 15000
-CONTRACTOR_PAYOUT_CENTS_PER_HOUR = 7500
+# Fallback only when technician_rates has no row for this person AND the
+# timesheet row has no explicit amount. Live amounts come from technician_rates.
+ESTIMATE_CLIENT_INVOICE_CENTS_PER_HOUR = 15000
+ESTIMATE_CONTRACTOR_PAYOUT_CENTS_PER_HOUR = 7500
+CLIENT_INVOICE_CENTS_PER_HOUR = ESTIMATE_CLIENT_INVOICE_CENTS_PER_HOUR
+CONTRACTOR_PAYOUT_CENTS_PER_HOUR = ESTIMATE_CONTRACTOR_PAYOUT_CENTS_PER_HOUR
 
 DEFAULT_PLATFORM_CONFIGS: dict[str, dict[str, Any]] = {
     "finance": {"approval_token_ttl_hours": 72, "require_operator_identity": True},
@@ -53,6 +58,7 @@ class VisitRecord:
     metadata_poc: dict[str, Any]
     current_state: str
     client_id: str | None = None
+    work_order_number: str | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +73,8 @@ class SignoffResult:
     approval_token: str | None = None
     message: str | None = None
     next_step: str | None = None
+    amount_cents: Optional[int] = None
+    amount_source: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -528,20 +536,22 @@ def create_visit(
     slack_channel_id: str | None = None,
     google_space_id: str | None = None,
     client_id: str | None = None,
+    work_order_number: str | None = None,
     source: str = "web_app",
 ) -> VisitRecord:
     """Deterministic visit creation — primary entry point for web app and Slack intake."""
     space_id = google_space_id or f"spaces/{uuid4()}"
+    wo = (work_order_number or "").strip() or None
     with sync_connection() as conn:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 """
                 INSERT INTO visits
                     (slack_channel_id, google_space_id, location_string, metadata_poc,
-                     client_id, current_state)
-                VALUES (%s, %s, %s, %s::jsonb, %s, 'initiated')
+                     client_id, work_order_number, current_state)
+                VALUES (%s, %s, %s, %s::jsonb, %s, %s, 'initiated')
                 RETURNING visit_id, slack_channel_id, google_space_id, location_string,
-                          metadata_poc, client_id, current_state::text
+                          metadata_poc, client_id, work_order_number, current_state::text
                 """,
                 (
                     slack_channel_id,
@@ -549,6 +559,7 @@ def create_visit(
                     location_string,
                     _json(metadata_poc),
                     client_id,
+                    wo,
                 ),
             )
             row = cur.fetchone()
@@ -561,6 +572,7 @@ def create_visit(
                     "location_string": location_string,
                     "metadata_poc": metadata_poc,
                     "client_id": client_id,
+                    "work_order_number": wo,
                     "source": source,
                 },
                 output_receipt={"google_space_id": space_id, "current_state": "initiated"},
@@ -573,7 +585,81 @@ def create_visit(
         metadata_poc=dict(row["metadata_poc"]),
         current_state=row["current_state"],
         client_id=row.get("client_id"),
+        work_order_number=row.get("work_order_number"),
     )
+
+
+def update_visit(
+    *,
+    visit_id: str,
+    location_string: str | None = None,
+    metadata_poc: dict[str, Any] | None = None,
+    client_id: str | None = None,
+    work_order_number: str | None = None,
+    slack_channel_id: str | None = None,
+    clear_slack_channel: bool = False,
+    actor_email: str | None = None,
+) -> dict[str, Any] | None:
+    """Admin edit of visit metadata. None fields are left unchanged."""
+    sets: list[str] = []
+    params: list[Any] = []
+    if location_string is not None:
+        sets.append("location_string = %s")
+        params.append(location_string.strip())
+    if metadata_poc is not None:
+        sets.append("metadata_poc = %s::jsonb")
+        params.append(_json(metadata_poc))
+    if client_id is not None:
+        sets.append("client_id = %s")
+        params.append(client_id.strip() or None)
+    if work_order_number is not None:
+        sets.append("work_order_number = %s")
+        params.append(work_order_number.strip() or None)
+    if clear_slack_channel:
+        sets.append("slack_channel_id = NULL")
+    elif slack_channel_id is not None:
+        sets.append("slack_channel_id = %s")
+        params.append(slack_channel_id.strip() or None)
+
+    if not sets:
+        return get_visit_by_id(visit_id)
+
+    params.append(visit_id)
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                UPDATE visits
+                SET {', '.join(sets)}
+                WHERE visit_id = %s
+                RETURNING visit_id, slack_channel_id, google_space_id, location_string,
+                          metadata_poc, client_id, work_order_number,
+                          current_state::text AS current_state, created_at, updated_at
+                """,
+                tuple(params),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            append_audit_trail(
+                conn,
+                visit_id=row["visit_id"],
+                execution_context="visit_update_admin",
+                input_payload={
+                    "actor_email": actor_email,
+                    "location_string": location_string,
+                    "metadata_poc": metadata_poc,
+                    "client_id": client_id,
+                    "work_order_number": work_order_number,
+                    "slack_channel_id": slack_channel_id,
+                    "clear_slack_channel": clear_slack_channel,
+                },
+                output_receipt={
+                    "visit_id": str(row["visit_id"]),
+                    "current_state": row["current_state"],
+                },
+            )
+            return dict(row)
 
 
 def create_visit_from_slack(
@@ -599,7 +685,8 @@ def get_visit_by_id(visit_id: str) -> dict[str, Any] | None:
             cur.execute(
                 """
                 SELECT visit_id, slack_channel_id, google_space_id, location_string,
-                       metadata_poc, client_id, current_state::text AS current_state,
+                       metadata_poc, client_id, work_order_number,
+                       current_state::text AS current_state,
                        created_at, updated_at
                 FROM visits
                 WHERE visit_id = %s
@@ -623,6 +710,224 @@ def _billable_hours(
     return round(rounded_minutes / 60.0, 4)
 
 
+_EMAIL_IN_IDENTITY = re.compile(
+    r"([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})"
+)
+
+
+def normalize_technician_email(value: str) -> Optional[str]:
+    """Pull an email out of 'Name <email>' or a bare address and drop -old suffixes."""
+    if not value:
+        return None
+    match = _EMAIL_IN_IDENTITY.search(value)
+    if not match:
+        return None
+    email = match.group(1).lower()
+    return re.sub(r"-old\d*$", "", email)
+
+
+def format_technician_identity(
+    email: str,
+    name: Optional[str] = None,
+) -> str:
+    cleaned_email = (email or "").strip()
+    cleaned_name = (name or "").strip()
+    if cleaned_name and cleaned_email:
+        return f"{cleaned_name} <{cleaned_email}>"
+    return cleaned_email or cleaned_name or "unknown@roboreliance.internal"
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _lookup_rate_for_identity(
+    cur: psycopg2.extensions.cursor,
+    technician_identity: str,
+) -> Optional[dict[str, Any]]:
+    email = normalize_technician_email(technician_identity)
+    if not email:
+        return None
+    cur.execute(
+        """
+        SELECT technician_email, technician_name,
+               payout_cents_per_hour, invoice_cents_per_hour
+        FROM technician_rates
+        WHERE lower(technician_email) = %s
+        """,
+        (email,),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else None
+
+
+def _resolve_timesheet_amounts(
+    cur: psycopg2.extensions.cursor,
+    *,
+    technician_identity: str,
+    duration_hours: float,
+    explicit_amount_cents: Optional[int],
+) -> dict[str, Any]:
+    """Amount (sheet Amount / contractor pay) and client invoice from a rate, or a clear fallback."""
+    hours = Decimal(str(round(duration_hours, 2)))
+    rate = _lookup_rate_for_identity(cur, technician_identity)
+    if rate:
+        payout_rate = int(rate["payout_cents_per_hour"])
+        invoice_rate = int(rate["invoice_cents_per_hour"])
+        payout = int(round(float(hours) * payout_rate))
+        invoice = int(round(float(hours) * invoice_rate))
+        return {
+            "billable_hours": hours,
+            "amount_cents": payout,
+            "payout_cents": payout,
+            "invoice_cents": invoice,
+            "amount_source": "technician_rate",
+            "payout_cents_per_hour": payout_rate,
+            "invoice_cents_per_hour": invoice_rate,
+        }
+    if explicit_amount_cents is not None:
+        amount = int(explicit_amount_cents)
+        return {
+            "billable_hours": hours,
+            "amount_cents": amount,
+            "payout_cents": amount,
+            "invoice_cents": amount,
+            "amount_source": "explicit",
+            "payout_cents_per_hour": None,
+            "invoice_cents_per_hour": None,
+        }
+    payout = int(round(float(hours) * ESTIMATE_CONTRACTOR_PAYOUT_CENTS_PER_HOUR))
+    invoice = int(round(float(hours) * ESTIMATE_CLIENT_INVOICE_CENTS_PER_HOUR))
+    return {
+        "billable_hours": hours,
+        "amount_cents": payout,
+        "payout_cents": payout,
+        "invoice_cents": invoice,
+        "amount_source": "estimate_fallback",
+        "payout_cents_per_hour": ESTIMATE_CONTRACTOR_PAYOUT_CENTS_PER_HOUR,
+        "invoice_cents_per_hour": ESTIMATE_CLIENT_INVOICE_CENTS_PER_HOUR,
+    }
+
+
+def _amount_message(amounts: dict[str, Any], explicit_was_provided: bool) -> str:
+    source = amounts["amount_source"]
+    if source == "technician_rate":
+        rate = int(amounts["payout_cents_per_hour"]) / 100.0
+        message = f"Amount from technician rate ${rate:.2f}/hr."
+        if explicit_was_provided:
+            message += " Entered amount was not used because a rate is on file."
+        return message
+    if source == "explicit":
+        return "No rate on file for this technician. Using the amount entered on this row."
+    payout_rate = ESTIMATE_CONTRACTOR_PAYOUT_CENTS_PER_HOUR / 100.0
+    invoice_rate = ESTIMATE_CLIENT_INVOICE_CENTS_PER_HOUR / 100.0
+    return (
+        "No rate on file and no amount entered. Using estimate fallback "
+        f"(${payout_rate:.2f}/hr payout, ${invoice_rate:.2f}/hr client invoice)."
+    )
+
+
+def _persist_labor_timesheet(
+    cur: psycopg2.extensions.cursor,
+    *,
+    visit_id: str,
+    technician_identity: str,
+    clock_in: datetime,
+    clock_out: datetime,
+    findings: str,
+    metadata: dict[str, Any],
+    amounts: dict[str, Any],
+    paid_to_contractor: Optional[bool],
+    billed_to_client: Optional[bool],
+    paid_by_client: Optional[bool],
+) -> str:
+    """Insert one closed labor row, or finish this technician's open clock-in on the visit."""
+    cur.execute(
+        """
+        SELECT log_id
+        FROM labor_logs
+        WHERE visit_id = %s
+          AND technician_identity = %s
+          AND clock_in IS NOT NULL
+          AND clock_out IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1
+        FOR UPDATE
+        """,
+        (visit_id, technician_identity),
+    )
+    open_row = cur.fetchone()
+    params = (
+        clock_in,
+        clock_out,
+        findings,
+        json.dumps(metadata),
+        paid_to_contractor,
+        billed_to_client,
+        paid_by_client,
+        amounts["billable_hours"],
+        amounts["amount_cents"],
+        amounts["payout_cents"],
+        amounts["invoice_cents"],
+        amounts["amount_source"],
+    )
+    if open_row:
+        cur.execute(
+            """
+            UPDATE labor_logs
+            SET clock_in = %s,
+                clock_out = %s,
+                extracted_findings = %s,
+                timesheet_metadata = %s::jsonb,
+                is_verified = TRUE,
+                paid_to_contractor = %s,
+                billed_to_client = %s,
+                paid_by_client = %s,
+                billable_hours = %s,
+                amount_cents = %s,
+                payout_cents = %s,
+                invoice_cents = %s,
+                amount_source = %s
+            WHERE log_id = %s
+            RETURNING log_id
+            """,
+            params + (open_row["log_id"],),
+        )
+        return str(cur.fetchone()["log_id"])
+
+    cur.execute(
+        """
+        INSERT INTO labor_logs
+            (visit_id, technician_identity, clock_in, clock_out,
+             extracted_findings, timesheet_metadata, is_verified,
+             paid_to_contractor, billed_to_client, paid_by_client,
+             billable_hours, amount_cents, payout_cents, invoice_cents, amount_source)
+        VALUES
+            (%s, %s, %s, %s, %s, %s::jsonb, TRUE, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING log_id
+        """,
+        (
+            visit_id,
+            technician_identity,
+            clock_in,
+            clock_out,
+            findings,
+            json.dumps(metadata),
+            paid_to_contractor,
+            billed_to_client,
+            paid_by_client,
+            amounts["billable_hours"],
+            amounts["amount_cents"],
+            amounts["payout_cents"],
+            amounts["invoice_cents"],
+            amounts["amount_source"],
+        ),
+    )
+    return str(cur.fetchone()["log_id"])
+
+
 def process_visit_signoff_transaction(
     *,
     visit_id: str,
@@ -630,14 +935,19 @@ def process_visit_signoff_transaction(
     clock_in: datetime,
     clock_out: datetime,
     text_findings: str,
-    timesheet_metadata: dict[str, Any] | None = None,
+    timesheet_metadata: Optional[dict[str, Any]] = None,
+    explicit_amount_cents: Optional[int] = None,
+    paid_to_contractor: Optional[bool] = None,
+    billed_to_client: Optional[bool] = None,
+    paid_by_client: Optional[bool] = None,
 ) -> SignoffResult:
     """
     Deterministic sign-off pipeline:
-    1. Validate temporal invariants against parsed timestamps
-    2. Re-read labor rows to cross-check when present
-    3. Persist labor + financial ledgers inside one transaction
-    4. Transition visit state to pending_approval
+    1. Validate clock-out is after clock-in (no prior clock-in required)
+    2. Bill from technician_rates, an explicit amount, or the estimate fallback
+    3. Persist one labor row for this person plus a financial ledger
+    4. Move initiated/active visits to pending_approval; leave pending_approval as-is
+       so another technician can still sign off on the same visit
     """
     if clock_out <= clock_in:
         return SignoffResult(
@@ -654,8 +964,12 @@ def process_visit_signoff_transaction(
             visit_id=visit_id,
             message="Validation Failed: Billable hours must be greater than zero after breaks.",
         )
-    invoice_cents = int(duration_hours * CLIENT_INVOICE_CENTS_PER_HOUR)
-    payout_cents = int(duration_hours * CONTRACTOR_PAYOUT_CENTS_PER_HOUR)
+    if explicit_amount_cents is not None and explicit_amount_cents < 0:
+        return SignoffResult(
+            status="error",
+            visit_id=visit_id,
+            message="Validation Failed: Amount cannot be negative.",
+        )
     finance_cfg = get_platform_config("finance")
     ttl_hours = int(finance_cfg.get("approval_token_ttl_hours", 72))
 
@@ -708,24 +1022,30 @@ def process_visit_signoff_transaction(
                         message="Validation Failed: Stored labor log has invalid temporal bounds.",
                     )
 
-            cur.execute(
-                """
-                INSERT INTO labor_logs
-                    (visit_id, technician_identity, clock_in, clock_out,
-                     extracted_findings, timesheet_metadata, is_verified)
-                VALUES (%s, %s, %s, %s, %s, %s::jsonb, TRUE)
-                RETURNING log_id
-                """,
-                (
-                    visit_id,
-                    technician_identity,
-                    clock_in,
-                    clock_out,
-                    text_findings,
-                    json.dumps(metadata),
-                ),
+            amounts = _resolve_timesheet_amounts(
+                cur,
+                technician_identity=technician_identity,
+                duration_hours=duration_hours,
+                explicit_amount_cents=explicit_amount_cents,
             )
-            labor_log_id = cur.fetchone()["log_id"]
+            invoice_cents = int(amounts["invoice_cents"])
+            payout_cents = int(amounts["payout_cents"])
+            amount_cents = int(amounts["amount_cents"])
+            amount_source = str(amounts["amount_source"])
+            metadata.setdefault("service_date", clock_in.date().isoformat())
+            labor_log_id = _persist_labor_timesheet(
+                cur,
+                visit_id=visit_id,
+                technician_identity=technician_identity,
+                clock_in=clock_in,
+                clock_out=clock_out,
+                findings=text_findings,
+                metadata=metadata,
+                amounts=amounts,
+                paid_to_contractor=paid_to_contractor,
+                billed_to_client=billed_to_client,
+                paid_by_client=paid_by_client,
+            )
 
             cur.execute(
                 """
@@ -734,7 +1054,7 @@ def process_visit_signoff_transaction(
                 VALUES (%s, %s, %s, %s, 'pending_review')
                 RETURNING ledger_id
                 """,
-                (visit_id, Decimal(str(round(duration_hours, 2))), invoice_cents, payout_cents),
+                (visit_id, amounts["billable_hours"], invoice_cents, payout_cents),
             )
             ledger_id = cur.fetchone()["ledger_id"]
 
@@ -745,20 +1065,23 @@ def process_visit_signoff_transaction(
                 ttl_hours=ttl_hours,
             )
 
-            cur.execute(
-                """
-                UPDATE visits
-                SET current_state = 'pending_approval'
-                WHERE visit_id = %s
-                """,
-                (visit_id,),
-            )
+            if visit["current_state"] in {"initiated", "active"}:
+                cur.execute(
+                    """
+                    UPDATE visits
+                    SET current_state = 'pending_approval'
+                    WHERE visit_id = %s
+                    """,
+                    (visit_id,),
+                )
 
             receipt = {
                 "status": "success",
                 "calculated_hours": duration_hours,
                 "invoice_cents": invoice_cents,
                 "payout_cents": payout_cents,
+                "amount_cents": amount_cents,
+                "amount_source": amount_source,
                 "labor_log_id": str(labor_log_id),
                 "ledger_id": str(ledger_id),
                 "approval_token": approval_token,
@@ -788,7 +1111,135 @@ def process_visit_signoff_transaction(
         ledger_id=str(ledger_id),
         approval_token=approval_token,
         next_step="awaiting_manager_hitl_approval",
+        amount_cents=amount_cents,
+        amount_source=amount_source,
     )
+
+
+def record_timesheet_entry(
+    *,
+    visit_id: str,
+    technician_identity: str,
+    clock_in: datetime,
+    clock_out: datetime,
+    findings: str,
+    timesheet_metadata: Optional[dict[str, Any]] = None,
+    explicit_amount_cents: Optional[int] = None,
+    paid_to_contractor: Optional[bool] = None,
+    billed_to_client: Optional[bool] = None,
+    paid_by_client: Optional[bool] = None,
+    actor_email: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Add one timesheet row for one person on a visit.
+
+    Does not require a prior clock-in and does not change visit state, so a
+    second technician can be added after someone else has already logged time.
+    """
+    clock_in = _as_utc(clock_in)
+    clock_out = _as_utc(clock_out)
+    if clock_out <= clock_in:
+        return {
+            "status": "error",
+            "message": "Validation Failed: Clock-out time cannot precede Clock-in time.",
+        }
+    if explicit_amount_cents is not None and explicit_amount_cents < 0:
+        return {"status": "error", "message": "Validation Failed: Amount cannot be negative."}
+
+    metadata = dict(timesheet_metadata or {})
+    duration_hours = _billable_hours(clock_in, clock_out, metadata)
+    if duration_hours <= 0:
+        return {
+            "status": "error",
+            "message": "Validation Failed: Billable hours must be greater than zero.",
+        }
+
+    findings_text = (findings or "").strip()
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT visit_id, location_string, work_order_number,
+                       current_state::text AS current_state
+                FROM visits
+                WHERE visit_id = %s
+                FOR UPDATE
+                """,
+                (visit_id,),
+            )
+            visit = cur.fetchone()
+            if not visit:
+                return {
+                    "status": "error",
+                    "message": f"Validation Failed: Unknown visit_id {visit_id}.",
+                }
+            if visit["current_state"] == "failed":
+                return {
+                    "status": "error",
+                    "message": "Validation Failed: Cannot add a timesheet to a failed visit.",
+                }
+
+            amounts = _resolve_timesheet_amounts(
+                cur,
+                technician_identity=technician_identity,
+                duration_hours=duration_hours,
+                explicit_amount_cents=explicit_amount_cents,
+            )
+            metadata.setdefault("service_date", clock_in.date().isoformat())
+            if visit.get("location_string"):
+                metadata.setdefault("customer_site_name", visit["location_string"])
+            if visit.get("work_order_number"):
+                metadata.setdefault("work_order_number", visit["work_order_number"])
+
+            log_id = _persist_labor_timesheet(
+                cur,
+                visit_id=visit_id,
+                technician_identity=technician_identity,
+                clock_in=clock_in,
+                clock_out=clock_out,
+                findings=findings_text,
+                metadata=metadata,
+                amounts=amounts,
+                paid_to_contractor=paid_to_contractor,
+                billed_to_client=billed_to_client,
+                paid_by_client=paid_by_client,
+            )
+            message = _amount_message(amounts, explicit_amount_cents is not None)
+            receipt = {
+                "status": "success",
+                "log_id": log_id,
+                "visit_id": visit_id,
+                "technician_identity": technician_identity,
+                "clock_in": clock_in.isoformat(),
+                "clock_out": clock_out.isoformat(),
+                "billable_hours": float(amounts["billable_hours"]),
+                "amount_cents": int(amounts["amount_cents"]),
+                "payout_cents": int(amounts["payout_cents"]),
+                "invoice_cents": int(amounts["invoice_cents"]),
+                "amount_source": amounts["amount_source"],
+                "payout_cents_per_hour": amounts["payout_cents_per_hour"],
+                "invoice_cents_per_hour": amounts["invoice_cents_per_hour"],
+                "paid_to_contractor": paid_to_contractor,
+                "billed_to_client": billed_to_client,
+                "paid_by_client": paid_by_client,
+                "message": message,
+            }
+            append_audit_trail(
+                conn,
+                visit_id=visit_id,
+                execution_context="api_record_timesheet",
+                input_payload={
+                    "visit_id": visit_id,
+                    "technician_identity": technician_identity,
+                    "actor_email": actor_email,
+                    "clock_in": clock_in.isoformat(),
+                    "clock_out": clock_out.isoformat(),
+                    "explicit_amount_cents": explicit_amount_cents,
+                    "findings": findings_text,
+                },
+                output_receipt=receipt,
+            )
+    return receipt
 
 
 def parse_iso8601(value: str) -> datetime:
@@ -815,21 +1266,27 @@ def list_visits(
         clauses.append("v.current_state::text NOT IN ('completed', 'failed')")
 
     if technician:
+        # Exact or substring match — identities may be "Name <email>" from CSV seed.
         clauses.append(
             """
             EXISTS (
                 SELECT 1 FROM labor_logs ll
                 WHERE ll.visit_id = v.visit_id
-                  AND ll.technician_identity = %s
+                  AND (
+                    ll.technician_identity = %s
+                    OR ll.technician_identity ILIKE %s
+                  )
             )
             """
         )
         params.append(technician)
+        params.append(f"%{technician}%")
 
     where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     query = f"""
         SELECT v.visit_id, v.slack_channel_id, v.google_space_id, v.location_string,
-               v.metadata_poc, v.client_id, v.current_state::text AS current_state,
+               v.metadata_poc, v.client_id, v.work_order_number,
+               v.current_state::text AS current_state,
                v.created_at, v.updated_at,
                ll.technician_identity,
                fl.approval_state AS pay_status,
@@ -862,7 +1319,10 @@ def get_visit_detail(visit_id: str) -> dict[str, Any] | None:
             cur.execute(
                 """
                 SELECT log_id, technician_identity, clock_in, clock_out,
-                       extracted_findings, timesheet_metadata, is_verified, created_at
+                       extracted_findings, timesheet_metadata, is_verified, created_at,
+                       paid_to_contractor, billed_to_client, paid_by_client,
+                       billable_hours, amount_cents, payout_cents, invoice_cents,
+                       amount_source
                 FROM labor_logs
                 WHERE visit_id = %s
                 ORDER BY created_at DESC
@@ -884,6 +1344,152 @@ def get_visit_detail(visit_id: str) -> dict[str, Any] | None:
     visit["labor_logs"] = labor_logs
     visit["financial_ledgers"] = ledgers
     return visit
+
+
+def get_labor_log(log_id: str) -> Optional[dict[str, Any]]:
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT ll.log_id, ll.visit_id, ll.technician_identity,
+                       ll.paid_to_contractor, ll.billed_to_client, ll.paid_by_client,
+                       ll.billable_hours, ll.amount_cents, ll.amount_source,
+                       ll.clock_in, ll.clock_out, ll.extracted_findings
+                FROM labor_logs ll
+                WHERE ll.log_id = %s
+                """,
+                (log_id,),
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def update_labor_payment_flags(
+    *,
+    log_id: str,
+    paid_to_contractor: Optional[bool],
+    billed_to_client: Optional[bool],
+    paid_by_client: Optional[bool],
+    actor_email: Optional[str] = None,
+) -> Optional[dict[str, Any]]:
+    """Replace the three sheet checkboxes on one labor row. None keeps the cell blank."""
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                UPDATE labor_logs
+                SET paid_to_contractor = %s,
+                    billed_to_client = %s,
+                    paid_by_client = %s
+                WHERE log_id = %s
+                RETURNING log_id, visit_id, technician_identity,
+                          paid_to_contractor, billed_to_client, paid_by_client,
+                          billable_hours, amount_cents, payout_cents, amount_source
+                """,
+                (paid_to_contractor, billed_to_client, paid_by_client, log_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            updated = dict(row)
+            append_audit_trail(
+                conn,
+                visit_id=updated["visit_id"],
+                execution_context="api_update_timesheet_flags",
+                input_payload={
+                    "log_id": log_id,
+                    "actor_email": actor_email,
+                    "paid_to_contractor": paid_to_contractor,
+                    "billed_to_client": billed_to_client,
+                    "paid_by_client": paid_by_client,
+                },
+                output_receipt={
+                    "log_id": str(updated["log_id"]),
+                    "paid_to_contractor": updated["paid_to_contractor"],
+                    "billed_to_client": updated["billed_to_client"],
+                    "paid_by_client": updated["paid_by_client"],
+                },
+            )
+            return updated
+
+
+def list_timesheet_rows(
+    *,
+    technician: Optional[str] = None,
+    client: Optional[str] = None,
+    work_order: Optional[str] = None,
+    date_from: Optional[Any] = None,
+    date_to: Optional[Any] = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    """Closed labor rows (one per person per submission) for the timesheet table."""
+    clauses = ["ll.clock_out IS NOT NULL"]
+    params: list[Any] = []
+    if technician:
+        clauses.append("ll.technician_identity ILIKE %s")
+        params.append(f"%{technician}%")
+    if client:
+        like = f"%{client}%"
+        clauses.append(
+            """
+            (
+                COALESCE(v.client_id, '') ILIKE %s
+                OR v.location_string ILIKE %s
+                OR COALESCE(ll.timesheet_metadata->>'customer_site_name', '') ILIKE %s
+            )
+            """
+        )
+        params.extend([like, like, like])
+    if work_order:
+        like = f"%{work_order}%"
+        clauses.append(
+            """
+            (
+                COALESCE(v.work_order_number, '') ILIKE %s
+                OR COALESCE(ll.timesheet_metadata->>'work_order_number', '') ILIKE %s
+            )
+            """
+        )
+        params.extend([like, like])
+    if date_from is not None:
+        clauses.append("(ll.clock_in AT TIME ZONE 'UTC')::date >= %s")
+        params.append(date_from)
+    if date_to is not None:
+        clauses.append("(ll.clock_in AT TIME ZONE 'UTC')::date <= %s")
+        params.append(date_to)
+
+    params.append(limit)
+    query = f"""
+        SELECT ll.log_id, ll.visit_id, ll.technician_identity,
+               ll.clock_in, ll.clock_out, ll.billable_hours,
+               ll.amount_cents, ll.payout_cents, ll.invoice_cents, ll.amount_source,
+               ll.extracted_findings, ll.paid_to_contractor, ll.billed_to_client,
+               ll.paid_by_client, ll.timesheet_metadata,
+               v.location_string, v.client_id, v.work_order_number,
+               v.current_state::text AS current_state,
+               tr.payout_cents_per_hour AS rate_payout_cents_per_hour,
+               tr.invoice_cents_per_hour AS rate_invoice_cents_per_hour
+        FROM labor_logs ll
+        JOIN visits v ON v.visit_id = ll.visit_id
+        LEFT JOIN technician_rates tr
+          ON lower(tr.technician_email) = lower(
+                regexp_replace(
+                    substring(
+                        ll.technician_identity
+                        from '([A-Za-z0-9._+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{{2,}})'
+                    ),
+                    '-old[0-9]*$',
+                    ''
+                )
+             )
+        WHERE {' AND '.join(clauses)}
+        ORDER BY ll.clock_in DESC NULLS LAST, ll.created_at DESC
+        LIMIT %s
+    """
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(query, tuple(params))
+            return [dict(row) for row in cur.fetchall()]
 
 
 def clock_in_transaction(
@@ -911,13 +1517,19 @@ def clock_in_transaction(
             cur.execute(
                 """
                 SELECT log_id FROM labor_logs
-                WHERE visit_id = %s AND clock_in IS NOT NULL AND clock_out IS NULL
+                WHERE visit_id = %s
+                  AND technician_identity = %s
+                  AND clock_in IS NOT NULL
+                  AND clock_out IS NULL
                 ORDER BY created_at DESC LIMIT 1
                 """,
-                (visit_id,),
+                (visit_id, technician_identity),
             )
             if cur.fetchone():
-                return {"status": "error", "message": "Technician already clocked in for this visit."}
+                return {
+                    "status": "error",
+                    "message": "This technician is already clocked in for this visit.",
+                }
 
             now = datetime.now(timezone.utc)
             cur.execute(

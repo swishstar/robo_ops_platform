@@ -1,17 +1,17 @@
 {
   "displayName": "Orchestrator uptime failure",
   "documentation": {
-    "content": "Orchestrator /health uptime check failing. Check Cloud Run revisions and Monitoring invoker IAM.",
+    "content": "Orchestrator /health uptime check failing across regions for 15+ minutes (pass rate < 80%). Check Cloud Run revision health and Monitoring invoker IAM.",
     "mimeType": "text/markdown"
   },
   "conditions": [
     {
-      "displayName": "Uptime check failing",
+      "displayName": "Uptime check failing (sustained)",
       "conditionThreshold": {
         "filter": "resource.type=\"cloud_run_revision\" AND metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.labels.check_id=\"orchestrator-health-eCfhE3S0gLM\"",
         "comparison": "COMPARISON_LT",
-        "thresholdValue": 1,
-        "duration": "300s",
+        "thresholdValue": 0.8,
+        "duration": "900s",
         "aggregations": [
           {
             "alignmentPeriod": "300s",

@@ -80,6 +80,9 @@ GET  /api/v1/visits?state=&technician=&include_completed=
 GET  /api/v1/visits/{visit_id}
 POST /api/v1/visits/{visit_id}/clock-in
 POST /api/v1/visits/{visit_id}/signoff
+GET  /api/v1/timesheets?technician=&client=&work_order=&date_from=&date_to=
+POST /api/v1/timesheets                        # after-the-fact labor row; no clock-in
+PATCH /api/v1/timesheets/{log_id}             # paid / billed / paid-by-client flags
 GET  /api/v1/finance/ledgers?approval_state=  # filterable table
 GET  /api/v1/finance/pending
 GET  /api/v1/finance/ledger/{ledger_id}

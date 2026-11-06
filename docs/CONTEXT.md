@@ -51,7 +51,8 @@ AI interprets; **deterministic Python tools validate and execute**. The LLM neve
 | Table | Purpose |
 |-------|---------|
 | `visits` | Service visit records — location, POC, state, linked channel IDs |
-| `labor_logs` | Technician clock in/out + findings per visit |
+| `labor_logs` | One timesheet row per technician on a visit: arrival, departure, amount, payment flags |
+| `technician_rates` | Per-technician payout and client invoice rates (cents per hour) |
 | `financial_ledgers` | Invoice/payout amounts, approval state per visit |
 | `immutable_audit_trail` | Append-only log of every system action |
 | `finance_approval_tokens` | One-time tokens for HITL finance approval |
@@ -68,6 +69,7 @@ AI interprets; **deterministic Python tools validate and execute**. The LLM neve
 - `GET /visits?state=&technician=&include_completed=` — filterable visits table
 - `GET /visits/{id}` — visit detail + labor logs + ledgers
 - `POST /visits/{id}/clock-in` | `POST /visits/{id}/signoff`
+- `GET /timesheets` | `POST /timesheets` | `PATCH /timesheets/{log_id}` — after-the-fact rows and payment flags
 - `GET /finance/ledgers?approval_state=` — filterable finance table
 - `GET /finance/pending` | `GET /finance/ledger/{id}` | `POST /finance/approve`
 - `POST /web-chat/message` — embedded NL chat
@@ -80,6 +82,8 @@ AI interprets; **deterministic Python tools validate and execute**. The LLM neve
 ## Workflow states
 
 `initiated` → `active` (clock-in) → `pending_approval` (sign-off) → `completed` (finance approved) or `failed`
+
+Timesheet rows can be added without clock-in, including a second technician on the same visit. That write does not by itself move the visit to `pending_approval`. Sign-off still does, for initiated or active visits, and another sign-off is allowed while the visit is already `pending_approval`.
 
 ## Dev environment
 

@@ -70,3 +70,19 @@ export function formatBillableHours(hours: number): string {
   if (mins === 0) return `${wholeHours} hr`;
   return `${wholeHours} hr ${mins} min`;
 }
+
+/** How amount_cents was chosen for a timesheet row. */
+export function amountSourceLabel(
+  source?: string | null,
+  rateCentsPerHour?: number | null,
+): string {
+  if (source === "technician_rate") {
+    if (rateCentsPerHour != null) {
+      return `Rate $${(rateCentsPerHour / 100).toFixed(2)}/hr`;
+    }
+    return "Technician rate";
+  }
+  if (source === "explicit") return "Entered amount";
+  if (source === "estimate_fallback") return "Estimate (no rate)";
+  return "";
+}

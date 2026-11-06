@@ -38,13 +38,17 @@ interface TimesheetPanelProps {
 export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
   const qc = useQueryClient();
   const user = getStoredUser();
+  const canAssignTech = user.role === "admin" || user.role === "finance_manager";
   const activeLog = visit.labor_logs.find((l) => l.clock_in && !l.clock_out);
   const canClockIn = ["initiated", "active"].includes(visit.current_state) && !activeLog;
-  const canSignoff = visit.current_state === "active" && !!activeLog;
+  const canLogTime = visit.current_state !== "failed";
 
   const [serviceDate, setServiceDate] = useState(todayDateValue());
   const [workOrderNumber, setWorkOrderNumber] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [techName, setTechName] = useState("");
+  const [techEmail, setTechEmail] = useState("");
+  const [amountDollars, setAmountDollars] = useState("");
   const [clockIn, setClockIn] = useState("");
   const [clockOut, setClockOut] = useState("");
   const [findings, setFindings] = useState("");
@@ -61,10 +65,7 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
     if (activeLog?.clock_in) {
       setClockIn(toDatetimeLocalValue(activeLog.clock_in));
     }
-    if (canSignoff && !clockOut) {
-      setClockOut(toDatetimeLocalValue(new Date().toISOString()));
-    }
-  }, [activeLog?.clock_in, canSignoff, clockOut]);
+  }, [activeLog?.clock_in]);
 
   const billableHours = useMemo(() => {
     if (!clockIn || !clockOut) return 0;
@@ -76,7 +77,7 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["visit", visitId] }),
   });
 
-  const signoffMut = useMutation({
+  const createMut = useMutation({
     mutationFn: () => {
       const timesheet: TimesheetMetadata = {
         service_date: serviceDate,
@@ -91,14 +92,30 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
         media_files: mediaFiles.length ? mediaFiles : undefined,
         attestation,
       };
-      return api.signoff(visitId, {
+      const rawAmount = amountDollars.trim().replace(/[$,]/g, "");
+      let explicitAmountCents: number | undefined;
+      if (rawAmount) {
+        const dollars = Number(rawAmount);
+        if (!Number.isFinite(dollars) || dollars < 0) {
+          throw new Error("Amount must be a positive number of dollars.");
+        }
+        explicitAmountCents = Math.round(dollars * 100);
+      }
+      return api.createTimesheet({
+        visit_id: visitId,
+        technician_identity: canAssignTech && techEmail.trim() ? techEmail.trim() : undefined,
+        technician_name: canAssignTech && techName.trim() ? techName.trim() : undefined,
         clock_in: new Date(clockIn).toISOString(),
         clock_out: new Date(clockOut).toISOString(),
         findings,
         timesheet,
+        explicit_amount_cents: explicitAmountCents,
       });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["visit", visitId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["visit", visitId] });
+      qc.invalidateQueries({ queryKey: ["timesheets"] });
+    },
   });
 
   function toggleWorkCategory(category: WorkCategory) {
@@ -145,8 +162,9 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
     <div className="panel timesheet-panel">
       <h2>Technician Site Visit Timesheet</h2>
       <p className="hint">
-        Log arrival and departure times for this site visit. Total hours are calculated and rounded
-        up to the nearest 15 minutes.
+        Log arrival and departure after the fact. Clock-in is optional, and another technician can
+        be added on this same job. Hours round up to the nearest 15 minutes. Amount uses that
+        technician&apos;s rate when one is on file.
       </p>
 
       {activeLog && (
@@ -161,20 +179,52 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
         </button>
       )}
 
-      {canSignoff && (
+      {visit.current_state === "failed" && (
+        <p className="hint">Timesheets cannot be added to a failed visit.</p>
+      )}
+
+      {canLogTime && (
         <form
           className="timesheet-form"
           onSubmit={(e) => {
             e.preventDefault();
-            if (signoffValid) signoffMut.mutate();
+            if (signoffValid) createMut.mutate();
           }}
         >
+          {canAssignTech && (
+            <fieldset>
+              <legend>Technician</legend>
+              <p className="field-help">
+                Leave blank to log your own time. Enter someone else to add a second technician on
+                this job.
+              </p>
+              <div className="form-grid">
+                <label>
+                  Name
+                  <input value={techName} onChange={(e) => setTechName(e.target.value)} />
+                </label>
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={techEmail}
+                    onChange={(e) => setTechEmail(e.target.value)}
+                    placeholder="technician@example.com"
+                  />
+                </label>
+              </div>
+            </fieldset>
+          )}
           <fieldset>
             <legend>Technician &amp; site</legend>
             <div className="form-grid">
               <label>
                 Email
-                <input type="email" value={user.email} readOnly />
+                <input
+                  type="email"
+                  value={canAssignTech && techEmail.trim() ? techEmail.trim() : user.email}
+                  readOnly
+                />
               </label>
               <label>
                 Customer / site name
@@ -232,6 +282,15 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
               <label>
                 Billable time (rounded up to 15 min)
                 <input type="text" value={formatBillableHours(billableHours)} readOnly />
+              </label>
+              <label>
+                Amount (only if this technician has no rate)
+                <input
+                  value={amountDollars}
+                  onChange={(e) => setAmountDollars(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="e.g. 105.00"
+                />
               </label>
             </div>
           </fieldset>
@@ -388,14 +447,20 @@ export function TimesheetPanel({ visitId, visit }: TimesheetPanelProps) {
             </label>
           </fieldset>
 
-          <button type="submit" className="primary" disabled={!signoffValid || signoffMut.isPending}>
-            {signoffMut.isPending ? "Submitting…" : "Submit Timesheet"}
+          <button type="submit" className="primary" disabled={!signoffValid || createMut.isPending}>
+            {createMut.isPending ? "Submitting…" : "Submit Timesheet"}
           </button>
+          {createMut.data && (
+            <p className="hint">
+              {createMut.data.message} {formatBillableHours(createMut.data.billable_hours)} · $
+              {(createMut.data.amount_cents / 100).toFixed(2)}
+            </p>
+          )}
         </form>
       )}
 
-      {(clockInMut.error || signoffMut.error) && (
-        <p className="error">{((clockInMut.error ?? signoffMut.error) as Error).message}</p>
+      {(clockInMut.error || createMut.error) && (
+        <p className="error">{((clockInMut.error ?? createMut.error) as Error).message}</p>
       )}
     </div>
   );
