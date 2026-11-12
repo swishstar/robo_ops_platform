@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
+import { FinanceNav } from "../components/FinanceNav";
 
 function formatCents(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
@@ -27,6 +28,7 @@ export function FinanceQueuePage() {
 
   return (
     <section>
+      <FinanceNav />
       <div className="page-header">
         <h1>Finance</h1>
         <div className="header-actions">

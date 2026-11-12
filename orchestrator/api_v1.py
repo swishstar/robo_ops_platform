@@ -24,12 +24,14 @@ from database import (
     get_visit_detail,
     list_finance_ledgers,
     list_pending_finance,
+    list_technician_rates,
     list_timesheet_rows,
     list_visits,
     record_timesheet_entry,
     touch_web_chat_session,
     update_labor_payment_flags,
     update_visit,
+    upsert_technician_rate,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["api-v1"])
@@ -137,6 +139,13 @@ class UpdateTimesheetFlagsRequest(BaseModel):
     paid_to_contractor: Optional[bool] = None
     billed_to_client: Optional[bool] = None
     paid_by_client: Optional[bool] = None
+
+
+class UpsertTechnicianRateRequest(BaseModel):
+    technician_email: EmailStr
+    technician_name: Optional[str] = Field(default=None, max_length=255)
+    payout_cents_per_hour: int = Field(..., ge=0, le=1_000_000)
+    invoice_cents_per_hour: int = Field(..., ge=0, le=1_000_000)
 
 
 class FinanceActionRequest(BaseModel):
@@ -431,6 +440,8 @@ async def api_create_timesheet(
         _validate_submitted_timesheet(body.timesheet)
     identity = _timesheet_identity(user, body.technician_identity, body.technician_name)
     timesheet_payload = body.timesheet.model_dump(exclude_none=True) if body.timesheet else None
+    # Payment progress is set by finance, not by the person logging hours.
+    can_set_flags = user.role in {"finance_manager", "admin"}
     result = record_timesheet_entry(
         visit_id=body.visit_id.strip(),
         technician_identity=identity,
@@ -439,9 +450,9 @@ async def api_create_timesheet(
         findings=body.findings,
         timesheet_metadata=timesheet_payload,
         explicit_amount_cents=body.explicit_amount_cents,
-        paid_to_contractor=body.paid_to_contractor,
-        billed_to_client=body.billed_to_client,
-        paid_by_client=body.paid_by_client,
+        paid_to_contractor=body.paid_to_contractor if can_set_flags else None,
+        billed_to_client=body.billed_to_client if can_set_flags else None,
+        paid_by_client=body.paid_by_client if can_set_flags else None,
         actor_email=user.email,
     )
     if result.get("status") != "success":
@@ -461,16 +472,10 @@ async def api_update_timesheet_flags(
     body: UpdateTimesheetFlagsRequest,
     user: AuthenticatedUser = Depends(get_current_user),
 ) -> dict[str, Any]:
+    require_finance_manager(user)
     existing = get_labor_log(log_id)
     if not existing:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Timesheet row not found.")
-    if user.role == "technician":
-        identity = str(existing.get("technician_identity") or "").lower()
-        if user.email.lower() not in identity:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You can only edit your own timesheet rows.",
-            )
     updated = update_labor_payment_flags(
         log_id=log_id,
         paid_to_contractor=body.paid_to_contractor,
@@ -481,6 +486,29 @@ async def api_update_timesheet_flags(
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Timesheet row not found.")
     return _serialize_row(updated)
+
+
+@router.get("/finance/rates")
+async def api_list_technician_rates(
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    require_finance_manager(user)
+    return {"rates": [_serialize_row(row) for row in list_technician_rates()]}
+
+
+@router.put("/finance/rates")
+async def api_upsert_technician_rate(
+    body: UpsertTechnicianRateRequest,
+    user: AuthenticatedUser = Depends(get_current_user),
+) -> dict[str, Any]:
+    require_finance_manager(user)
+    row = upsert_technician_rate(
+        technician_email=str(body.technician_email),
+        technician_name=body.technician_name,
+        payout_cents_per_hour=body.payout_cents_per_hour,
+        invoice_cents_per_hour=body.invoice_cents_per_hour,
+    )
+    return _serialize_row(row)
 
 
 @router.get("/finance/ledgers")

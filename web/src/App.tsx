@@ -1,7 +1,9 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { getStoredUser, setStoredUser, UserRole } from "./api/client";
 import { FinanceDetailPage } from "./pages/FinanceDetailPage";
+import { FinanceProgressPage } from "./pages/FinanceProgressPage";
 import { FinanceQueuePage } from "./pages/FinanceQueuePage";
+import { FinanceSettingsPage } from "./pages/FinanceSettingsPage";
 import { NewVisitPage } from "./pages/NewVisitPage";
 import { TimesheetsPage } from "./pages/TimesheetsPage";
 import { VisitDetailPage } from "./pages/VisitDetailPage";
@@ -26,7 +28,12 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <h1>Robo Reliance Ops</h1>
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            RR
+          </span>
+          <h1>Robo Reliance Ops</h1>
+        </div>
         <nav>
           <NavLink to="/" end>
             Visits
@@ -37,9 +44,11 @@ export function App() {
           )}
         </nav>
         <div className="dev-auth">
-          <span>
-            {user.email} · {user.role}
+          <span className="who">
+            {user.email}
+            <span className="role-name">{user.role.replace("_", " ")}</span>
           </span>
+          <div className="role-switch">
           <button
             type="button"
             className={user.role === "technician" ? "active-role" : undefined}
@@ -61,6 +70,7 @@ export function App() {
           >
             Admin
           </button>
+          </div>
         </div>
       </header>
       <main>
@@ -70,6 +80,8 @@ export function App() {
           <Route path="/visits/new" element={<NewVisitPage />} />
           <Route path="/visits/:visitId" element={<VisitDetailPage />} />
           <Route path="/finance" element={<FinanceQueuePage />} />
+          <Route path="/finance/progress" element={<FinanceProgressPage />} />
+          <Route path="/finance/settings" element={<FinanceSettingsPage />} />
           <Route path="/finance/:ledgerId" element={<FinanceDetailPage />} />
         </Routes>
       </main>

@@ -184,6 +184,20 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  listTechnicianRates: () =>
+    request<{ rates: TechnicianRate[] }>("/api/v1/finance/rates"),
+
+  upsertTechnicianRate: (body: {
+    technician_email: string;
+    technician_name?: string;
+    payout_cents_per_hour: number;
+    invoice_cents_per_hour: number;
+  }) =>
+    request<TechnicianRate>("/api/v1/finance/rates", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
   financeLedgers: (params?: { approval_state?: string }) => {
     const q = params?.approval_state
       ? `?approval_state=${encodeURIComponent(params.approval_state)}`
@@ -283,6 +297,14 @@ export interface VisitDetail extends Visit {
     invoice_cents: number;
     payout_cents: number;
   }>;
+}
+
+export interface TechnicianRate {
+  technician_email: string;
+  technician_name: string | null;
+  payout_cents_per_hour: number;
+  invoice_cents_per_hour: number;
+  updated_at?: string;
 }
 
 export interface FinanceLedger {

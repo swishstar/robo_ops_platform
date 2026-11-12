@@ -1775,6 +1775,49 @@ def upsert_channel_ingestion_cursor(
             )
 
 
+def list_technician_rates() -> list[dict[str, Any]]:
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT technician_email, technician_name,
+                       payout_cents_per_hour, invoice_cents_per_hour, updated_at
+                FROM technician_rates
+                ORDER BY COALESCE(technician_name, technician_email)
+                """
+            )
+            return [dict(row) for row in cur.fetchall()]
+
+
+def upsert_technician_rate(
+    *,
+    technician_email: str,
+    technician_name: Optional[str],
+    payout_cents_per_hour: int,
+    invoice_cents_per_hour: int,
+) -> dict[str, Any]:
+    email = technician_email.strip().lower()
+    name = (technician_name or "").strip() or None
+    with sync_connection() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                INSERT INTO technician_rates
+                    (technician_email, technician_name, payout_cents_per_hour, invoice_cents_per_hour)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (technician_email) DO UPDATE SET
+                    technician_name = EXCLUDED.technician_name,
+                    payout_cents_per_hour = EXCLUDED.payout_cents_per_hour,
+                    invoice_cents_per_hour = EXCLUDED.invoice_cents_per_hour,
+                    updated_at = CURRENT_TIMESTAMP
+                RETURNING technician_email, technician_name,
+                          payout_cents_per_hour, invoice_cents_per_hour, updated_at
+                """,
+                (email, name, payout_cents_per_hour, invoice_cents_per_hour),
+            )
+            return dict(cur.fetchone())
+
+
 def touch_web_chat_session(
     *,
     session_id: str,

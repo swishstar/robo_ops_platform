@@ -1,7 +1,8 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { api, getStoredUser, TimesheetRow } from "../api/client";
+import { api, getStoredUser } from "../api/client";
+import { PAYMENT_FLAG_FIELDS, PaymentFlagReadout } from "../components/PaymentFlags";
 import { amountSourceLabel, formatBillableHours } from "../constants/timesheet";
 
 function formatCents(cents: number | null | undefined) {
@@ -22,18 +23,6 @@ function thisWeekRange(): { from: string; to: string } {
   const sunday = new Date(monday);
   sunday.setDate(monday.getDate() + 6);
   return { from: isoDate(monday), to: isoDate(sunday) };
-}
-
-function flagToSelect(value: boolean | null | undefined): string {
-  if (value === true) return "true";
-  if (value === false) return "false";
-  return "";
-}
-
-function selectToFlag(value: string): boolean | null {
-  if (value === "true") return true;
-  if (value === "false") return false;
-  return null;
 }
 
 export function TimesheetsPage() {
@@ -119,36 +108,6 @@ export function TimesheetsPage() {
     onError: (err: Error) => setFormError(err.message),
   });
 
-  type PaymentFlags = {
-    paid_to_contractor: boolean | null;
-    billed_to_client: boolean | null;
-    paid_by_client: boolean | null;
-  };
-  const pendingFlags = useRef(new Map<string, PaymentFlags>());
-
-  const flagMut = useMutation({
-    mutationFn: (vars: { logId: string; flags: PaymentFlags }) =>
-      api.updateTimesheetFlags(vars.logId, vars.flags),
-    onSuccess: (_data, vars) => {
-      const pending = pendingFlags.current.get(vars.logId);
-      if (pending && JSON.stringify(pending) === JSON.stringify(vars.flags)) {
-        pendingFlags.current.delete(vars.logId);
-      }
-      qc.invalidateQueries({ queryKey: ["timesheets"] });
-    },
-  });
-
-  function updateFlag(row: TimesheetRow, key: keyof PaymentFlags, value: string) {
-    const current = pendingFlags.current.get(row.log_id) ?? {
-      paid_to_contractor: row.paid_to_contractor,
-      billed_to_client: row.billed_to_client,
-      paid_by_client: row.paid_by_client,
-    };
-    const next = { ...current, [key]: selectToFlag(value) };
-    pendingFlags.current.set(row.log_id, next);
-    flagMut.mutate({ logId: row.log_id, flags: next });
-  }
-
   const rows = listQuery.data?.timesheets ?? [];
   const hoursPreview = useMemo(() => {
     if (!clockIn || !clockOut) return 0;
@@ -168,6 +127,7 @@ export function TimesheetsPage() {
       </div>
       <p className="hint">
         One row per technician on a job. Log time after the visit — clock-in is not required.
+        Payment progress is read-only here. Finance updates billed, paid by client, and paid to contractor.
         {canAssignTech ? " Enter another technician to add them to an existing job." : ""}
       </p>
 
@@ -325,8 +285,6 @@ export function TimesheetsPage() {
       {listQuery.data?.truncated && (
         <p className="hint">Showing the first 1000 matching rows.</p>
       )}
-      {flagMut.error && <p className="error">{(flagMut.error as Error).message}</p>}
-
       <div className="table-scroll">
         <table className="data-table">
           <thead>
@@ -339,9 +297,9 @@ export function TimesheetsPage() {
               <th>Hours</th>
               <th>Amount</th>
               <th>Notes</th>
-              <th>Paid to contractor</th>
-              <th>Billed to client</th>
-              <th>Paid by client</th>
+              {PAYMENT_FLAG_FIELDS.map(([, label]) => (
+                <th key={label}>{label}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -355,10 +313,10 @@ export function TimesheetsPage() {
                 <td className="mono">{row.work_order_number || "—"}</td>
                 <td>{row.clock_in ? new Date(row.clock_in).toLocaleString() : "—"}</td>
                 <td>{row.clock_out ? new Date(row.clock_out).toLocaleString() : "—"}</td>
-                <td>
+                <td className="num">
                   {row.billable_hours != null ? formatBillableHours(Number(row.billable_hours)) : "—"}
                 </td>
-                <td>
+                <td className="num">
                   {formatCents(row.amount_cents)}
                   <span className="amount-source">
                     {amountSourceLabel(row.amount_source, row.rate_payout_cents_per_hour)}
@@ -367,25 +325,9 @@ export function TimesheetsPage() {
                 <td className="notes-cell" title={row.extracted_findings || ""}>
                   {row.extracted_findings || "—"}
                 </td>
-                {(
-                  [
-                    ["paid_to_contractor", "Paid to contractor"],
-                    ["billed_to_client", "Billed to client"],
-                    ["paid_by_client", "Paid by client"],
-                  ] as const
-                ).map(([key, label]) => (
+                {PAYMENT_FLAG_FIELDS.map(([key]) => (
                   <td key={key}>
-                    <select
-                      aria-label={label}
-                      className="flag-select"
-                      value={flagToSelect(row[key])}
-                      disabled={flagMut.isPending && flagMut.variables?.logId === row.log_id}
-                      onChange={(e) => updateFlag(row, key, e.target.value)}
-                    >
-                      <option value="">—</option>
-                      <option value="true">Yes</option>
-                      <option value="false">No</option>
-                    </select>
+                    <PaymentFlagReadout value={row[key]} />
                   </td>
                 ))}
               </tr>

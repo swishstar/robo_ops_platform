@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
+import { FinanceNav } from "../components/FinanceNav";
 import { TimesheetSummary } from "../components/TimesheetSummary";
 import { WebChat } from "../components/WebChat";
 
@@ -40,7 +41,10 @@ export function FinanceDetailPage() {
 
   return (
     <section>
-      <Link to="/finance">&larr; Queue</Link>
+      <FinanceNav />
+      <Link to="/finance" className="back-link">
+        &larr; Queue
+      </Link>
       <h1>{data.location_string}</h1>
       <p>State: {data.approval_state}</p>
       <dl className="detail-grid">
